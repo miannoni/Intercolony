@@ -168,6 +168,10 @@ namespace Intercolony
             "S1: frozen emergency quote survives save/load before acceptance";
         private const string FrozenEmergencyReloadHireLabel =
             "S2: accepting after reload preserves the exact route and timing";
+        private const string FrozenEmergencyArrivalAfterReloadLabel =
+            "S3: accepted travelling contract survives save/load and arrives exactly once via its emergency route";
+        private const string EmployeeArrivedLetterLabel = "Employee arrived";
+        private const string EmergencyArrivalLetterLabel = "Emergency reinforcements inbound";
         private const string OrdinaryArrivalLabel =
             "ordinary hire keeps conventional travelDays arrival";
 
@@ -263,13 +267,14 @@ namespace Intercolony
                 LaborCandidateService.Clear();
 
                 int worldPawnsAfter = Find.WorldPawns?.AllPawnsAliveOrDead?.Count ?? 0;
+                int worldPawnDelta = worldPawnsAfter - worldPawnsBefore;
 
                 // The leak that no amount of playing would reveal. An applicant is pinned
                 // KeepForever, so one missed discard is a pawn the world pawn GC has been told never
                 // to collect — invisible until a save file is inexplicably large.
-                r.Check(worldPawnsAfter <= worldPawnsBefore,
+                r.Check(worldPawnDelta == 0,
                     "no world pawns leaked by postings opened and closed (§35.2)",
-                    $"{worldPawnsBefore} before, {worldPawnsAfter} after");
+                    $"{worldPawnsBefore} before, {worldPawnsAfter} after, delta {worldPawnDelta}");
 
                 r.Info($"restored employer standing to {rep?.ScoreDisplay ?? 0}/100 and removed test postings.");
             }
@@ -1211,25 +1216,35 @@ namespace Intercolony
 
         private static void DiscardEquipmentFixturePawn(Pawn pawn)
         {
-            if (pawn == null || pawn.Discarded || Find.WorldPawns == null)
+            if (pawn == null || Find.WorldPawns == null)
             {
                 return;
             }
 
             try
             {
-                if (pawn.Spawned)
-                {
-                    pawn.DeSpawn();
-                }
-
+                // Remove a live world-pawn registration before consulting Discarded. A pawn that
+                // was destroyed or discarded through a bad path can still be held by WorldPawns;
+                // returning early would leave that registration behind forever.
                 if (Find.WorldPawns.Contains(pawn))
                 {
                     Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
                 }
                 else if (!pawn.Discarded)
                 {
-                    Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                    if (pawn.Spawned)
+                    {
+                        pawn.DeSpawn();
+                    }
+
+                    if (Find.WorldPawns.Contains(pawn))
+                    {
+                        Find.WorldPawns.RemoveAndDiscardPawnViaGC(pawn);
+                    }
+                    else if (!pawn.Discarded)
+                    {
+                        Find.WorldPawns.PassToWorld(pawn, PawnDiscardDecideMode.Discard);
+                    }
                 }
             }
             catch (System.Exception ex)
@@ -3323,23 +3338,6 @@ namespace Intercolony
             {
                 hireFailure = $"{ex.GetType().Name}: {ex.Message}";
             }
-            finally
-            {
-                CleanupApplicantHireFixture(
-                    state,
-                    loadedPosting,
-                    loadedApplicant,
-                    loadedContract,
-                    "self-test reloaded frozen emergency arrival cleanup");
-
-                if (loadedWorldPawns != null)
-                {
-                    foreach (Pawn pawn in loadedWorldPawns)
-                    {
-                        DiscardEquipmentFixturePawn(pawn);
-                    }
-                }
-            }
 
             string actualContractDescription = loadedContract == null
                 ? "missing"
@@ -3351,6 +3349,455 @@ namespace Intercolony
                 $"{expectedTransport}/{expectedArrivalTicks} ticks; ordinary fallback " +
                 $"{expectedTravelDays}d = {ordinaryArrivalTicks} ticks; " +
                 $"hire failure {hireFailure ?? "none"}");
+
+            bool s3Passed = false;
+            bool s3AssertionReported = false;
+            bool s3PawnSpawned = false;
+            string s3Failure = null;
+            string s3ExpectedContractDescription = "missing";
+            string s3LoadedContractDescription = "missing";
+            int s3EmergencyArrivalLetters = 0;
+            int s3EmployeeArrivalLettersBefore = 0;
+            int s3EmployeeArrivalLettersAfter = 0;
+            int s3EmployeeArrivalLettersAfterFurther = 0;
+            EmploymentContract reloadedContract = null;
+            Pawn reloadedContractPawn = null;
+            List<Pawn> contractLoadedWorldPawns = null;
+            List<EmploymentContract> savedEmployments = null;
+            List<JobPosting> savedPostings = null;
+            List<Letter> savedLetters = null;
+            List<IArchivable> savedArchivables = null;
+            List<Skyfaller> savedSkyfallers = null;
+            Archive s3Archive = null;
+            TickManager s3TickManager = null;
+            int savedS3Tick = 0;
+            bool savedS3FastEcology = false;
+            bool savedS3FastEcologyCaptured = false;
+            IntercolonySettings s3Settings = null;
+            IntercolonyLetterVolume savedS3LetterVolume = IntercolonyLetterVolume.Minimal;
+            bool savedS3LetterVolumeCaptured = false;
+            HashSet<EmploymentContract> savedDropPodPreflightFailuresLogged = null;
+            HashSet<EmploymentContract> savedDropPodArrivalLettersSent = null;
+            HashSet<EmploymentContract> dropPodPreflightFailuresLogged = null;
+            HashSet<EmploymentContract> dropPodArrivalLettersSent = null;
+
+            try
+            {
+                if (loadedContract == null)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "the reloaded applicant did not produce an accepted travelling contract");
+                    return;
+                }
+
+                if (Find.TickManager == null)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "Find.TickManager was null, so the real world tick path was unavailable");
+                    return;
+                }
+
+                if (Find.WorldPawns == null)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "Find.WorldPawns was null, so the reloaded travelling pawn could not be staged");
+                    return;
+                }
+
+                if (Find.LetterStack == null)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "Find.LetterStack was null, so exact arrival events could not be counted");
+                    return;
+                }
+
+                if (Find.Maps == null || !Find.Maps.Contains(map))
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "the hired contract's destination map was not registered in Find.Maps");
+                    return;
+                }
+
+                if (!map.IsPlayerHome)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "the hired contract's destination map was not a player-home map");
+                    return;
+                }
+
+                FieldInfo preflightFailuresField = typeof(EmploymentService).GetField(
+                    "dropPodPreflightFailuresLogged",
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                FieldInfo arrivalLettersSentField = typeof(EmploymentService).GetField(
+                    "dropPodArrivalLettersSent",
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                dropPodPreflightFailuresLogged = preflightFailuresField?.GetValue(null)
+                    as HashSet<EmploymentContract>;
+                dropPodArrivalLettersSent = arrivalLettersSentField?.GetValue(null)
+                    as HashSet<EmploymentContract>;
+                if (dropPodPreflightFailuresLogged == null || dropPodArrivalLettersSent == null)
+                {
+                    r.Skip(
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        "the drop-pod session guards were unavailable for exact cleanup");
+                    return;
+                }
+
+                savedDropPodPreflightFailuresLogged =
+                    new HashSet<EmploymentContract>(dropPodPreflightFailuresLogged);
+                savedDropPodArrivalLettersSent =
+                    new HashSet<EmploymentContract>(dropPodArrivalLettersSent);
+
+                savedLetters = new List<Letter>(Find.LetterStack.LettersListForReading);
+                s3Archive = Find.Archive;
+                if (s3Archive != null)
+                {
+                    savedArchivables = new List<IArchivable>(
+                        s3Archive.ArchivablesListForReading);
+                }
+
+                // These are plain locals captured from the accepted contract before its second
+                // Scribe round trip. The loaded contract must be compared to these exact values.
+                EmploymentArrivalTransport expectedContractTransport = loadedContract.arrivalTransport;
+                int expectedContractArrivalTick = loadedContract.arrivalTick;
+                s3ExpectedContractDescription =
+                    $"{expectedContractTransport}/{expectedContractArrivalTick} tick";
+
+                List<Pawn> contractSavedWorldPawns = loadedContract.pawn == null
+                    ? new List<Pawn>()
+                    : new List<Pawn> { loadedContract.pawn };
+                EmploymentContract contractToSave = loadedContract;
+                string contractRoundTripFailure = null;
+
+                try
+                {
+                    Scribe.saver.InitSaving(path, "intercolonyFrozenEmergencyContractTest");
+                    Scribe_Collections.Look(
+                        ref contractSavedWorldPawns, "worldPawns", LookMode.Deep);
+                    Scribe_Deep.Look(ref contractToSave, "contract");
+                    Scribe.saver.FinalizeSaving();
+
+                    Scribe.loader.InitLoading(path);
+                    Scribe_Collections.Look(
+                        ref contractLoadedWorldPawns, "worldPawns", LookMode.Deep);
+                    Scribe_Deep.Look(ref reloadedContract, "contract");
+                    Scribe.loader.FinalizeLoading();
+                }
+                catch (Exception ex)
+                {
+                    contractRoundTripFailure = $"{ex.GetType().Name}: {ex.Message}";
+                }
+                finally
+                {
+                    Scribe.ForceStop();
+                    if (File.Exists(path))
+                    {
+                        File.Delete(path);
+                    }
+                }
+
+                reloadedContractPawn = reloadedContract?.pawn;
+                bool contractRoundTripped = contractRoundTripFailure == null &&
+                    contractLoadedWorldPawns != null &&
+                    contractLoadedWorldPawns.Count == 1 &&
+                    reloadedContract != null &&
+                    reloadedContract.status == EmploymentStatus.Travelling &&
+                    reloadedContract.arrivalTransport == expectedContractTransport &&
+                    reloadedContract.arrivalTick == expectedContractArrivalTick &&
+                    reloadedContract.pawn != null;
+
+                s3LoadedContractDescription = reloadedContract == null
+                    ? "missing"
+                    : $"{reloadedContract.arrivalTransport}/{reloadedContract.arrivalTick} tick";
+
+                if (contractRoundTripFailure != null)
+                {
+                    s3Failure = $"contract save/load failed: {contractRoundTripFailure}";
+                }
+                else if (!contractRoundTripped)
+                {
+                    s3Failure = "the reloaded contract did not preserve its travelling route, tick, or pawn";
+                }
+                else if (expectedContractTransport != EmploymentArrivalTransport.DropPod)
+                {
+                    s3Failure =
+                        $"the accepted contract route was {expectedContractTransport}, not DropPod";
+                }
+                else
+                {
+                    // The isolated Scribe collection resolves the contract's pawn but does not add
+                    // the pawn to the live WorldPawns collection. Map and faction are world-owned
+                    // references, not part of this already-established isolated Scribe idiom: the
+                    // real save resolves them from the world root, so stage those references from
+                    // the reloaded pawn/map before driving the real tick path. The route and tick
+                    // assertions above remain against the object that came back from Scribe.
+                    if (reloadedContract.destinationMap == null)
+                    {
+                        reloadedContract.destinationMap = map;
+                    }
+
+                    if (reloadedContract.employerFaction == null && reloadedContractPawn != null)
+                    {
+                        reloadedContract.employerFaction = reloadedContractPawn.Faction;
+                    }
+
+                    if (reloadedContract.destinationMap != map)
+                    {
+                        s3Failure = "the reloaded contract resolved to a different destination map";
+                    }
+                    else if (reloadedContract.employerFaction == null)
+                    {
+                        s3Failure = "the reloaded contract had no employer faction for arrival preflight";
+                    }
+                    else
+                    {
+                        // Stage that exact reloaded pawn before driving the real tick path.
+                        if (!Find.WorldPawns.Contains(reloadedContractPawn))
+                        {
+                            Find.WorldPawns.PassToWorld(
+                                reloadedContractPawn, PawnDiscardDecideMode.KeepForever);
+                        }
+
+                        savedEmployments = new List<EmploymentContract>(state.Employments);
+                        savedPostings = new List<JobPosting>(state.Postings);
+
+                        savedSkyfallers = new List<Skyfaller>(
+                            map.listerThings.GetThingsOfType<Skyfaller>());
+                        s3TickManager = Find.TickManager;
+                        savedS3Tick = s3TickManager.TicksGame;
+                        savedS3FastEcology = DebugSettings.fastEcology;
+                        savedS3FastEcologyCaptured = true;
+                        s3Settings = IntercolonyMod.Settings;
+                        savedS3LetterVolume = s3Settings.letterVolume;
+                        savedS3LetterVolumeCaptured = true;
+
+                        // Isolate the accepted reloaded contract from the rest of the live component
+                        // while still entering it through World.WorldTick and the component scheduler.
+                        state.Employments.Clear();
+                        state.Employments.Add(reloadedContract);
+                        state.Postings.Clear();
+
+                        // Arrival is Chatty, so make the event observable. Clear only the temporary
+                        // letter view; the exact original list and archive are restored in finally.
+                        s3Settings.letterVolume = IntercolonyLetterVolume.Everything;
+                        Find.LetterStack.LettersListForReading.Clear();
+                        s3EmployeeArrivalLettersBefore = CountLetterLabel(
+                            Find.LetterStack.LettersListForReading, EmployeeArrivedLetterLabel);
+
+                        DebugSettings.fastEcology = false;
+                        int launchTick =
+                            ((Math.Max(s3TickManager.TicksGame, reloadedContract.arrivalTick) /
+                                GenDate.TicksPerHour) + 1) * GenDate.TicksPerHour;
+                        s3TickManager.DebugSetTicksGame(launchTick - 1);
+
+                        // DoSingleTick is the real path: TickManager -> World.WorldTick ->
+                        // WorldComponentUtility -> IntercolonyWorldComponent.WorldComponentTick ->
+                        // EmploymentService.Advance. At this hourly boundary it launches the pod.
+                        s3TickManager.DoSingleTick();
+                        s3EmergencyArrivalLetters = CountLetterLabel(
+                            Find.LetterStack.LettersListForReading, EmergencyArrivalLetterLabel);
+
+                        // Vanilla Skyfaller uses a maximum 220-tick flight. Give it a bounded real map
+                        // tick window, rather than calling its impact or employment helper directly.
+                        for (int i = 0; i < 300 &&
+                            reloadedContract.pawn != null && !reloadedContract.pawn.Spawned; i++)
+                        {
+                            s3TickManager.DoSingleTick();
+                        }
+
+                        s3PawnSpawned = reloadedContract.pawn != null && reloadedContract.pawn.Spawned;
+                        int completionTick =
+                            (s3TickManager.TicksGame / GenDate.TicksPerHour + 1) *
+                            GenDate.TicksPerHour;
+                        s3TickManager.DebugSetTicksGame(completionTick - 1);
+                        s3TickManager.DoSingleTick();
+                        s3EmployeeArrivalLettersAfter = CountLetterLabel(
+                            Find.LetterStack.LettersListForReading, EmployeeArrivedLetterLabel);
+
+                        int furtherTick =
+                            (s3TickManager.TicksGame / GenDate.TicksPerHour + 1) *
+                            GenDate.TicksPerHour;
+                        s3TickManager.DebugSetTicksGame(furtherTick - 1);
+                        s3TickManager.DoSingleTick();
+                        s3EmployeeArrivalLettersAfterFurther = CountLetterLabel(
+                            Find.LetterStack.LettersListForReading, EmployeeArrivedLetterLabel);
+
+                        s3Passed = contractRoundTripped &&
+                            s3EmergencyArrivalLetters == 1 &&
+                            s3EmployeeArrivalLettersAfter - s3EmployeeArrivalLettersBefore == 1 &&
+                            s3EmployeeArrivalLettersAfterFurther -
+                                s3EmployeeArrivalLettersAfter == 0 &&
+                            s3PawnSpawned;
+                    }
+                }
+
+                r.Check(
+                    s3Passed,
+                    FrozenEmergencyArrivalAfterReloadLabel,
+                    $"reloaded contract {s3LoadedContractDescription}; expected " +
+                    $"{s3ExpectedContractDescription}; emergency-route letters " +
+                    $"{s3EmergencyArrivalLetters}; employee-arrival letters " +
+                    $"{s3EmployeeArrivalLettersBefore}/{s3EmployeeArrivalLettersAfter}/" +
+                    $"{s3EmployeeArrivalLettersAfterFurther}; pawn spawned {s3PawnSpawned}; " +
+                    $"failure {s3Failure ?? "none"}");
+                s3AssertionReported = true;
+            }
+            catch (Exception ex)
+            {
+                s3Failure = $"{ex.GetType().Name}: {ex.Message}";
+                if (!s3AssertionReported)
+                {
+                    r.Check(
+                        false,
+                        FrozenEmergencyArrivalAfterReloadLabel,
+                        $"reloaded contract {s3LoadedContractDescription}; expected " +
+                        $"{s3ExpectedContractDescription}; failure {s3Failure}");
+                    s3AssertionReported = true;
+                }
+            }
+            finally
+            {
+                try
+                {
+                    if (reloadedContract != null && reloadedContract.IsOpen)
+                    {
+                        EmploymentService.End(
+                            reloadedContract,
+                            EmploymentStatus.Failed,
+                            "self-test reloaded frozen emergency contract arrival cleanup");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    IntercolonyLog.Warning(
+                        $"S3 reloaded contract cleanup failed: {ex.GetType().Name}: {ex.Message}");
+                }
+
+                if (state.Employments.Contains(reloadedContract))
+                {
+                    state.Employments.Remove(reloadedContract);
+                }
+
+                if (savedSkyfallers != null && map.listerThings != null)
+                {
+                    List<Skyfaller> currentSkyfallers = new List<Skyfaller>(
+                        map.listerThings.GetThingsOfType<Skyfaller>());
+                    foreach (Skyfaller skyfaller in currentSkyfallers)
+                    {
+                        if (skyfaller != null && !savedSkyfallers.Contains(skyfaller))
+                        {
+                            try
+                            {
+                                skyfaller.Destroy(DestroyMode.Vanish);
+                            }
+                            catch (Exception ex)
+                            {
+                                IntercolonyLog.Warning(
+                                    $"S3 skyfaller cleanup failed: {ex.GetType().Name}: " +
+                                    ex.Message);
+                            }
+                        }
+                    }
+                }
+
+                DiscardEquipmentFixturePawn(reloadedContractPawn);
+
+                // The second isolated Scribe pass has its own deep-loaded world-pawn owner. It is
+                // normally the same reference reached through reloadedContract.pawn, but retain
+                // and dispose it independently so a split reference cannot escape teardown.
+                if (contractLoadedWorldPawns != null)
+                {
+                    foreach (Pawn pawn in contractLoadedWorldPawns)
+                    {
+                        if (!object.ReferenceEquals(pawn, reloadedContractPawn))
+                        {
+                            DiscardEquipmentFixturePawn(pawn);
+                        }
+                    }
+                }
+
+                if (savedEmployments != null)
+                {
+                    state.Employments.Clear();
+                    state.Employments.AddRange(savedEmployments);
+                }
+
+                if (savedPostings != null)
+                {
+                    state.Postings.Clear();
+                    state.Postings.AddRange(savedPostings);
+                }
+
+                try
+                {
+                    CleanupApplicantHireFixture(
+                        state,
+                        loadedPosting,
+                        loadedApplicant,
+                        loadedContract,
+                        "self-test reloaded frozen emergency arrival cleanup");
+                }
+                catch (Exception ex)
+                {
+                    IntercolonyLog.Warning(
+                        $"S3 original hire cleanup failed: {ex.GetType().Name}: {ex.Message}");
+                    state.Employments.Remove(loadedContract);
+                }
+
+                if (loadedWorldPawns != null)
+                {
+                    foreach (Pawn pawn in loadedWorldPawns)
+                    {
+                        DiscardEquipmentFixturePawn(pawn);
+                    }
+                }
+
+                if (s3Archive != null && savedArchivables != null)
+                {
+                    s3Archive.ArchivablesListForReading.Clear();
+                    s3Archive.ArchivablesListForReading.AddRange(savedArchivables);
+                }
+
+                if (Find.LetterStack != null && savedLetters != null)
+                {
+                    Find.LetterStack.LettersListForReading.Clear();
+                    Find.LetterStack.LettersListForReading.AddRange(savedLetters);
+                }
+
+                if (savedS3LetterVolumeCaptured)
+                {
+                    s3Settings.letterVolume = savedS3LetterVolume;
+                }
+
+                if (savedS3FastEcologyCaptured)
+                {
+                    DebugSettings.fastEcology = savedS3FastEcology;
+                }
+
+                if (s3TickManager != null)
+                {
+                    s3TickManager.DebugSetTicksGame(savedS3Tick);
+                }
+
+                if (dropPodPreflightFailuresLogged != null &&
+                    savedDropPodPreflightFailuresLogged != null)
+                {
+                    dropPodPreflightFailuresLogged.Clear();
+                    dropPodPreflightFailuresLogged.UnionWith(savedDropPodPreflightFailuresLogged);
+                }
+
+                if (dropPodArrivalLettersSent != null && savedDropPodArrivalLettersSent != null)
+                {
+                    dropPodArrivalLettersSent.Clear();
+                    dropPodArrivalLettersSent.UnionWith(savedDropPodArrivalLettersSent);
+                }
+            }
         }
 
         private static void SkipFrozenEmergencyArrivalAssertions(
@@ -3367,6 +3814,26 @@ namespace Intercolony
         {
             r.Skip(FrozenEmergencyQuoteRoundTripLabel, reason);
             r.Skip(FrozenEmergencyReloadHireLabel, reason);
+            r.Skip(FrozenEmergencyArrivalAfterReloadLabel, reason);
+        }
+
+        private static int CountLetterLabel(List<Letter> letters, string label)
+        {
+            int count = 0;
+            if (letters == null)
+            {
+                return count;
+            }
+
+            foreach (Letter letter in letters)
+            {
+                if (letter != null && letter.Label == label)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private static void CleanupApplicantHireFixture(

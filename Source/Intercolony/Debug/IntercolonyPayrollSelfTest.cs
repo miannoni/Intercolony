@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -295,236 +296,259 @@ namespace Intercolony
                 return;
             }
 
-            Pawn worker = contract.pawn;
-
-            // A periodic hire takes the signing fee up front and nothing else — not the term.
-            // This asserted `paidSilver == 0`, which stopped being true when daily and per-quadrum
-            // hires gained a five-day signing fee: WageStructure.UpFrontCost returns SigningFee
-            // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
-            // that fee, so the charge is deliberate and the assertion was stale. The distinction
-            // still worth guarding is that a periodic hire is not charged for the whole term.
-            // Keep this oracle independent of SigningFee: the contract stores the worker's ask,
-            // while Daily terms charge 135% of that ask and take five charged days at hire. On
-            // the fixture's usual base of 60, that is 60 * 135 / 100 * 5 = 405 silver.
-            //
-            // This assertion had never actually executed. The hire above it always failed for want
-            // of silver, and the method returns early when it does, so the arithmetic was written
-            // when the signing fee was introduced and then never run until the funding fix landed.
-            int expectedChargedDailyWage = Mathf.RoundToInt(contract.dailyWage * 135f / 100f);
-            int expectedSigningFee = expectedChargedDailyWage * 5;
-            r.Check(contract.paidSilver == expectedSigningFee,
-                "a periodic hire pays the signing fee up front and no more (§37)",
-                $"{contract.paidSilver} silver, expected {expectedSigningFee}");
-            int expectedFullTermCost = expectedChargedDailyWage * term + expectedSigningFee;
-            r.Check(
-                contract.paidSilver < expectedFullTermCost,
-                "and is not charged for the whole term");
-            r.Check(contract.nextPaymentTick < 0,
-                "the pay clock does not start until the worker arrives");
-
-            contract.arrivalTick = GenTicks.TicksGame;
-            EmploymentService.Advance(state.Employments);
-
-            r.Check(contract.status == EmploymentStatus.Active, "worker arrived",
-                contract.status.ToString());
-            if (contract.status != EmploymentStatus.Active)
+            Pawn worker = null;
+            try
             {
-                return;
-            }
+                worker = contract.pawn;
 
-            r.Check(contract.nextPaymentTick > GenTicks.TicksGame,
-                "the pay clock starts on arrival, not at hire",
-                $"first payday in {contract.DaysUntilPayment:0.##}d");
+                // A periodic hire takes the signing fee up front and nothing else — not the term.
+                // This asserted `paidSilver == 0`, which stopped being true when daily and per-quadrum
+                // hires gained a five-day signing fee: WageStructure.UpFrontCost returns SigningFee
+                // for every non-prepaid structure, and 0.9.2 shipped a fix specifically to *disclose*
+                // that fee, so the charge is deliberate and the assertion was stale. The distinction
+                // still worth guarding is that a periodic hire is not charged for the whole term.
+                // Keep this oracle independent of SigningFee: the contract stores the worker's ask,
+                // while Daily terms charge 135% of that ask and take five charged days at hire. On
+                // the fixture's usual base of 60, that is 60 * 135 / 100 * 5 = 405 silver.
+                //
+                // This assertion had never actually executed. The hire above it always failed for want
+                // of silver, and the method returns early when it does, so the arithmetic was written
+                // when the signing fee was introduced and then never run until the funding fix landed.
+                int expectedChargedDailyWage = Mathf.RoundToInt(contract.dailyWage * 135f / 100f);
+                int expectedSigningFee = expectedChargedDailyWage * 5;
+                r.Check(contract.paidSilver == expectedSigningFee,
+                    "a periodic hire pays the signing fee up front and no more (§37)",
+                    $"{contract.paidSilver} silver, expected {expectedSigningFee}");
+                int expectedFullTermCost = expectedChargedDailyWage * term + expectedSigningFee;
+                r.Check(
+                    contract.paidSilver < expectedFullTermCost,
+                    "and is not charged for the whole term");
+                r.Check(contract.nextPaymentTick < 0,
+                    "the pay clock does not start until the worker arrives");
 
-            // --- A period that CAN be paid ---
-            int wage = contract.PeriodPayment;
-            IntercolonyLaborSelfTestSupport.EnsureSilver(map, wage);
+                contract.arrivalTick = GenTicks.TicksGame;
+                EmploymentService.Advance(state.Employments);
 
-            int before = PurchaseOrderService.CountColonySilver(map);
-            contract.nextPaymentTick = GenTicks.TicksGame;
-            PayrollService.Advance(state.Employments, state.LaborDebts, state);
-
-            int after = PurchaseOrderService.CountColonySilver(map);
-            r.Check(before - after == wage, "a met pay period takes exactly the period's wage",
-                $"{before} -> {after}, period is {wage}");
-            r.Check(contract.arrearsSilver == 0 && contract.missedPayments == 0,
-                "a met pay period leaves no arrears");
-            r.Check(contract.nextPaymentTick > GenTicks.TicksGame,
-                "the clock advances to the next period",
-                $"next in {contract.DaysUntilPayment:0.##}d");
-
-            // --- Starve the colony and miss period one: warning only ---
-            IntercolonyLaborSelfTestSupport.StripSilver(map);
-            r.Info($"colony silver stripped to {PurchaseOrderService.CountColonySilver(map)}.");
-
-            contract.nextPaymentTick = GenTicks.TicksGame;
-            PayrollService.Advance(state.Employments, state.LaborDebts, state);
-
-            r.Check(contract.status == EmploymentStatus.Active,
-                "a first missed payroll does not end employment (§39 'failure should be playable')",
-                contract.status.ToString());
-            r.Check(contract.arrearsSilver > 0, "the shortfall becomes arrears, not a blocked period",
-                $"{contract.arrearsSilver} silver owed");
-            r.Check(contract.missedPayments == 1, "one miss recorded",
-                contract.missedPayments.ToString());
-            r.Check(!contract.refusingWork, "the worker still works after one miss");
-
-            int arrearsAfterOne = contract.arrearsSilver;
-
-            // --- Miss period two: worker downs tools ---
-            contract.nextPaymentTick = GenTicks.TicksGame;
-            PayrollService.Advance(state.Employments, state.LaborDebts, state);
-
-            r.Check(contract.status == EmploymentStatus.Active,
-                "a second miss still does not end employment");
-            r.Check(contract.refusingWork, "the worker downs tools on the second miss (§39 step 4)");
-            r.Check(contract.arrearsSilver > arrearsAfterOne,
-                "arrears accumulate across periods",
-                $"{arrearsAfterOne} -> {contract.arrearsSilver}");
-
-            if (contract.pawn?.workSettings != null && contract.pawn.workSettings.EverWork)
-            {
-                int active = 0;
-                foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
+                r.Check(contract.status == EmploymentStatus.Active, "worker arrived",
+                    contract.status.ToString());
+                if (contract.status != EmploymentStatus.Active)
                 {
-                    if (contract.pawn.workSettings.GetPriority(work) > 0)
-                    {
-                        active++;
-                    }
+                    return;
                 }
 
-                r.Check(active == 0, "every work priority is zeroed while refusing",
-                    $"{active} still enabled");
-            }
+                r.Check(contract.nextPaymentTick > GenTicks.TicksGame,
+                    "the pay clock starts on arrival, not at hire",
+                    $"first payday in {contract.DaysUntilPayment:0.##}d");
 
-            // The mood penalty is a situational thought, so it is true or false right now rather
-            // than something that had to be granted. Assert the worker actually reads as unpaid.
-            ThoughtDef unpaid = DefDatabase<ThoughtDef>.GetNamedSilentFail("Intercolony_UnpaidWages");
-            r.Check(unpaid != null, "the unpaid-wages thought def loaded");
-            if (unpaid?.Worker != null && contract.pawn != null)
-            {
-                ThoughtState moodState = unpaid.Worker.CurrentState(contract.pawn);
-                r.Check(moodState.Active, "the worker is unhappy about the unpaid wages (§39 step 3)",
-                    moodState.Active ? $"stage {moodState.StageIndex}" : "inactive");
-            }
+                // --- A period that CAN be paid ---
+                int wage = contract.PeriodPayment;
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, wage);
 
-            // --- Recovering: pay it off, work resumes ---
-            int owed = contract.arrearsSilver;
-            IntercolonyLaborSelfTestSupport.EnsureSilver(map, owed);
-            bool settled = PayrollService.TryPayArrears(contract, map, out string payFail);
-
-            r.Check(settled, "arrears can be paid off", payFail ?? $"{owed} silver");
-            r.Check(contract.arrearsSilver == 0, "paying up clears the arrears");
-            r.Check(!contract.refusingWork, "paying up puts the worker back to work");
-            r.Check(contract.missedPayments == 0, "paying up resets the miss counter");
-
-            if (contract.pawn?.workSettings != null && contract.pawn.workSettings.EverWork)
-            {
-                int active = 0;
-                foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
-                {
-                    if (contract.pawn.workSettings.GetPriority(work) > 0)
-                    {
-                        active++;
-                    }
-                }
-
-                r.Check(active > 0, "the priorities they had are restored, not left blank",
-                    $"{active} work types re-enabled");
-            }
-
-            if (unpaid?.Worker != null && contract.pawn != null)
-            {
-                r.Check(!unpaid.Worker.CurrentState(contract.pawn).Active,
-                    "the mood penalty lifts the moment the debt is settled");
-            }
-
-            // --- All the way to a walk-out ---
-            int debtsBefore = state.LaborDebts.Count;
-            IntercolonyLaborSelfTestSupport.StripSilver(map);
-
-            for (int i = 0; i < PayrollService.MissesBeforeQuitting && contract.IsOpen; i++)
-            {
+                int before = PurchaseOrderService.CountColonySilver(map);
                 contract.nextPaymentTick = GenTicks.TicksGame;
                 PayrollService.Advance(state.Employments, state.LaborDebts, state);
-            }
 
-            r.Check(contract.status == EmploymentStatus.Quit,
-                $"the worker walks out after {PayrollService.MissesBeforeQuitting} misses (§39 step 5)",
-                contract.status.ToString());
-            r.Check(state.LaborDebts.Count == debtsBefore + 1,
-                "a debt record outlives the employment (§39 step 6)",
-                $"{debtsBefore} -> {state.LaborDebts.Count}");
-            r.Check(contract.pawn == null,
-                "the closed record still holds no live references");
+                int after = PurchaseOrderService.CountColonySilver(map);
+                r.Check(before - after == wage, "a met pay period takes exactly the period's wage",
+                    $"{before} -> {after}, period is {wage}");
+                r.Check(contract.arrearsSilver == 0 && contract.missedPayments == 0,
+                    "a met pay period leaves no arrears");
+                r.Check(contract.nextPaymentTick > GenTicks.TicksGame,
+                    "the clock advances to the next period",
+                    $"next in {contract.DaysUntilPayment:0.##}d");
 
-            int? forcefullyKeptAfter = null;
-            if (Find.WorldPawns != null)
-            {
-                forcefullyKeptAfter = Find.WorldPawns.ForcefullyKeptPawns.Count;
-            }
+                // --- Starve the colony and miss period one: warning only ---
+                IntercolonyLaborSelfTestSupport.StripSilver(map);
+                r.Info($"colony silver stripped to {PurchaseOrderService.CountColonySilver(map)}.");
 
-            if (worker == null)
-            {
-                r.Info("worker kept-forever assertion skipped: the hired worker is null.");
-            }
-            else if (Find.WorldPawns == null)
-            {
-                r.Info("worker kept-forever assertion skipped: Find.WorldPawns is null.");
-            }
-            else
-            {
-                // This fails if EmploymentService.TryHire pins a hired worker with
-                // PawnDiscardDecideMode.KeepForever (EmploymentService.cs:187) so they survive
-                // the journey; arrival unpins by going through WorldPawns.RemovePawn before spawning
-                // (EmploymentService.cs:810), and WorldPawns.RemovePawn drops the pawn from
-                // pawnsForcefullyKeptAsWorldPawns at reference/decompiled/RimWorld.Planet/WorldPawns.cs:257).
-                // If either half changes, every hire leaves a pawn the GC has been told never to
-                // collect, and this assertion is what says so.
-                r.Check(!Find.WorldPawns.ForcefullyKeptPawns.Contains(worker),
-                    "the worker who walked out is not kept forever");
-            }
+                contract.nextPaymentTick = GenTicks.TicksGame;
+                PayrollService.Advance(state.Employments, state.LaborDebts, state);
 
-            if (!forcefullyKeptBefore.HasValue || !forcefullyKeptAfter.HasValue)
-            {
-                r.Info("forcefully kept world-pawn count assertion skipped: Find.WorldPawns was null during the check.");
-            }
-            else
-            {
-                // This fails on any path in the employment lifecycle that pins and forgets. It
-                // deliberately checks "did not grow", rather than "is unchanged", because a
-                // legitimate unpin elsewhere in the same window is not a fault.
-                r.Check(forcefullyKeptAfter.Value <= forcefullyKeptBefore.Value,
-                    "forcefully kept world pawns did not grow across the check",
-                    $"{forcefullyKeptBefore.Value} -> {forcefullyKeptAfter.Value}");
-            }
+                r.Check(contract.status == EmploymentStatus.Active,
+                    "a first missed payroll does not end employment (§39 'failure should be playable')",
+                    contract.status.ToString());
+                r.Check(contract.arrearsSilver > 0, "the shortfall becomes arrears, not a blocked period",
+                    $"{contract.arrearsSilver} silver owed");
+                r.Check(contract.missedPayments == 1, "one miss recorded",
+                    contract.missedPayments.ToString());
+                r.Check(!contract.refusingWork, "the worker still works after one miss");
 
-            if (state.LaborDebts.Count > debtsBefore)
-            {
-                LaborDebt debt = state.LaborDebts[state.LaborDebts.Count - 1];
-                r.Check(debt.amountOwed > 0 && debt.originalAmount == debt.amountOwed,
-                    "the debt records what is owed", $"{debt.amountOwed} silver");
-                r.Check(debt.settlementId == contract.settlementId,
-                    "the debt is against the settlement that supplied the worker",
-                    debt.settlementName);
-                r.Check(PayrollService.TotalOwed(state) >= debt.amountOwed,
-                    "total owed includes debts from departed workers");
+                int arrearsAfterOne = contract.arrearsSilver;
 
-                // And it can be made good.
-                IntercolonyLaborSelfTestSupport.EnsureSilver(map, debt.amountOwed);
-                int owedNow = debt.amountOwed;
-                bool paidOff = PayrollService.TrySettleDebt(debt, map, out string debtFail);
-                r.Check(paidOff, "a debt can be settled after the fact", debtFail ?? $"{owedNow} silver");
-                r.Check(debt.IsSettled && debt.originalAmount == owedNow,
-                    "settling clears the balance but keeps the history",
-                    $"owed {debt.amountOwed}, originally {debt.originalAmount}");
+                // --- Miss period two: worker downs tools ---
+                contract.nextPaymentTick = GenTicks.TicksGame;
+                PayrollService.Advance(state.Employments, state.LaborDebts, state);
+
+                r.Check(contract.status == EmploymentStatus.Active,
+                    "a second miss still does not end employment");
+                r.Check(contract.refusingWork, "the worker downs tools on the second miss (§39 step 4)");
+                r.Check(contract.arrearsSilver > arrearsAfterOne,
+                    "arrears accumulate across periods",
+                    $"{arrearsAfterOne} -> {contract.arrearsSilver}");
+
+                if (contract.pawn?.workSettings != null && contract.pawn.workSettings.EverWork)
+                {
+                    int active = 0;
+                    foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
+                    {
+                        if (contract.pawn.workSettings.GetPriority(work) > 0)
+                        {
+                            active++;
+                        }
+                    }
+
+                    r.Check(active == 0, "every work priority is zeroed while refusing",
+                        $"{active} still enabled");
+                }
+
+                // The mood penalty is a situational thought, so it is true or false right now rather
+                // than something that had to be granted. Assert the worker actually reads as unpaid.
+                ThoughtDef unpaid = DefDatabase<ThoughtDef>.GetNamedSilentFail("Intercolony_UnpaidWages");
+                r.Check(unpaid != null, "the unpaid-wages thought def loaded");
+                if (unpaid?.Worker != null && contract.pawn != null)
+                {
+                    ThoughtState moodState = unpaid.Worker.CurrentState(contract.pawn);
+                    r.Check(moodState.Active, "the worker is unhappy about the unpaid wages (§39 step 3)",
+                        moodState.Active ? $"stage {moodState.StageIndex}" : "inactive");
+                }
+
+                // --- Recovering: pay it off, work resumes ---
+                int owed = contract.arrearsSilver;
+                IntercolonyLaborSelfTestSupport.EnsureSilver(map, owed);
+                bool settled = PayrollService.TryPayArrears(contract, map, out string payFail);
+
+                r.Check(settled, "arrears can be paid off", payFail ?? $"{owed} silver");
+                r.Check(contract.arrearsSilver == 0, "paying up clears the arrears");
+                r.Check(!contract.refusingWork, "paying up puts the worker back to work");
+                r.Check(contract.missedPayments == 0, "paying up resets the miss counter");
+
+                if (contract.pawn?.workSettings != null && contract.pawn.workSettings.EverWork)
+                {
+                    int active = 0;
+                    foreach (WorkTypeDef work in DefDatabase<WorkTypeDef>.AllDefsListForReading)
+                    {
+                        if (contract.pawn.workSettings.GetPriority(work) > 0)
+                        {
+                            active++;
+                        }
+                    }
+
+                    r.Check(active > 0, "the priorities they had are restored, not left blank",
+                        $"{active} work types re-enabled");
+                }
+
+                if (unpaid?.Worker != null && contract.pawn != null)
+                {
+                    r.Check(!unpaid.Worker.CurrentState(contract.pawn).Active,
+                        "the mood penalty lifts the moment the debt is settled");
+                }
+
+                // --- All the way to a walk-out ---
+                int debtsBefore = state.LaborDebts.Count;
+                IntercolonyLaborSelfTestSupport.StripSilver(map);
+
+                for (int i = 0; i < PayrollService.MissesBeforeQuitting && contract.IsOpen; i++)
+                {
+                    contract.nextPaymentTick = GenTicks.TicksGame;
+                    PayrollService.Advance(state.Employments, state.LaborDebts, state);
+                }
+
+                r.Check(contract.status == EmploymentStatus.Quit,
+                    $"the worker walks out after {PayrollService.MissesBeforeQuitting} misses (§39 step 5)",
+                    contract.status.ToString());
+                r.Check(state.LaborDebts.Count == debtsBefore + 1,
+                    "a debt record outlives the employment (§39 step 6)",
+                    $"{debtsBefore} -> {state.LaborDebts.Count}");
+                r.Check(contract.pawn == null,
+                    "the closed record still holds no live references");
+
+                int? forcefullyKeptAfter = null;
+                if (Find.WorldPawns != null)
+                {
+                    forcefullyKeptAfter = Find.WorldPawns.ForcefullyKeptPawns.Count;
+                }
+
+                if (worker == null)
+                {
+                    r.Info("worker kept-forever assertion skipped: the hired worker is null.");
+                }
+                else if (Find.WorldPawns == null)
+                {
+                    r.Info("worker kept-forever assertion skipped: Find.WorldPawns is null.");
+                }
+                else
+                {
+                    // This fails if EmploymentService.TryHire pins a hired worker with
+                    // PawnDiscardDecideMode.KeepForever (EmploymentService.cs:187) so they survive
+                    // the journey; arrival unpins by going through WorldPawns.RemovePawn before spawning
+                    // (EmploymentService.cs:810), and WorldPawns.RemovePawn drops the pawn from
+                    // pawnsForcefullyKeptAsWorldPawns at reference/decompiled/RimWorld.Planet/WorldPawns.cs:257).
+                    // If either half changes, every hire leaves a pawn the GC has been told never to
+                    // collect, and this assertion is what says so.
+                    r.Check(!Find.WorldPawns.ForcefullyKeptPawns.Contains(worker),
+                        "the worker who walked out is not kept forever");
+                }
+
+                if (!forcefullyKeptBefore.HasValue || !forcefullyKeptAfter.HasValue)
+                {
+                    r.Info("forcefully kept world-pawn count assertion skipped: Find.WorldPawns was null during the check.");
+                }
+                else
+                {
+                    // This fails on any path in the employment lifecycle that pins and forgets. It
+                    // deliberately checks "did not grow", rather than "is unchanged", because a
+                    // legitimate unpin elsewhere in the same window is not a fault.
+                    r.Check(forcefullyKeptAfter.Value <= forcefullyKeptBefore.Value,
+                        "forcefully kept world pawns did not grow across the check",
+                        $"{forcefullyKeptBefore.Value} -> {forcefullyKeptAfter.Value}");
+                }
+
+                if (state.LaborDebts.Count > debtsBefore)
+                {
+                    LaborDebt debt = state.LaborDebts[state.LaborDebts.Count - 1];
+                    r.Check(debt.amountOwed > 0 && debt.originalAmount == debt.amountOwed,
+                        "the debt records what is owed", $"{debt.amountOwed} silver");
+                    r.Check(debt.settlementId == contract.settlementId,
+                        "the debt is against the settlement that supplied the worker",
+                        debt.settlementName);
+                    r.Check(PayrollService.TotalOwed(state) >= debt.amountOwed,
+                        "total owed includes debts from departed workers");
+
+                    // And it can be made good.
+                    IntercolonyLaborSelfTestSupport.EnsureSilver(map, debt.amountOwed);
+                    int owedNow = debt.amountOwed;
+                    bool paidOff = PayrollService.TrySettleDebt(debt, map, out string debtFail);
+                    r.Check(paidOff, "a debt can be settled after the fact", debtFail ?? $"{owedNow} silver");
+                    r.Check(debt.IsSettled && debt.originalAmount == owedNow,
+                        "settling clears the balance but keeps the history",
+                        $"owed {debt.amountOwed}, originally {debt.originalAmount}");
+                }
+
+                r.sb.AppendLine();
+                r.sb.AppendLine("  Not covered here — check by hand:");
+                r.sb.AppendLine("    * save while an employee is in arrears, reload, and confirm the arrears,");
+                r.sb.AppendLine("      miss count and refusing-work state all survived (§61, §82);");
+                r.sb.AppendLine("    * that a quadrum-paid worker really is paid every 15 days in normal play.");
             }
+            finally
+            {
+                if (worker != null && !worker.Discarded && Find.WorldPawns != null)
+                {
+                    if (worker.Spawned)
+                    {
+                        worker.DeSpawn();
+                    }
 
-            r.sb.AppendLine();
-            r.sb.AppendLine("  Not covered here — check by hand:");
-            r.sb.AppendLine("    * save while an employee is in arrears, reload, and confirm the arrears,");
-            r.sb.AppendLine("      miss count and refusing-work state all survived (§61, §82);");
-            r.sb.AppendLine("    * that a quadrum-paid worker really is paid every 15 days in normal play.");
+                    if (Find.WorldPawns.Contains(worker))
+                    {
+                        Find.WorldPawns.RemoveAndDiscardPawnViaGC(worker);
+                    }
+                    else if (!worker.Discarded)
+                    {
+                        Find.WorldPawns.PassToWorld(worker, PawnDiscardDecideMode.Discard);
+                    }
+                }
+            }
         }
 
         private static string Summarize(Results r)
