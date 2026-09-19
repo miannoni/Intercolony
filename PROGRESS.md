@@ -3057,3 +3057,36 @@ Manual test:
 - No human playtest was performed in this run; the owed observations are listed in
   `docs/PENDING_PLAYTESTS.md`.
 
+## Playtest Correction Pass II — P0-P8  (2026-09-18 to 2026-09-21)
+
+Implemented:
+- This run was branch `foreman/playtest-corrections-2026-09-18`, cut from `b4bab42`: 49 commits, nine stages P0-P8.
+- **P0** — Default-off posting timing instrumentation records exclusive nested phases, so "the click feels slow" could become a number.
+- **P1 / F04** — Produce controls are reachable from one place with one meaning, from both entry points.
+- **P2 / F16** — One header slot is used for ending employment; renewal and transition choices are in explicit groups.
+- **P3 / F19/F20** — A second market-evidence tier stops the Business benchmark showing a dash, and material choice moves material cost without moving paid labor.
+- **P4 / F23** — Applicants stop arriving in tier uniforms; gear is scored by what it is rather than by a list of def names, and diversity comes from walk order rather than from hoping a draw clears the bar.
+- **P5 / F23** — The Post click fell from 350-605 ms to 17-20 ms by moving equipment fulfilment off the click path; a negative control restoring the synchronous drain put it back to 423 ms.
+- **P6 / F24** — The emergency arrival quote is frozen onto the applicant when they apply, persisted across save and load with a schema 59 to 60 migration, and honoured at hire. Nine assertions, every one seen fail for its own reason before being accepted.
+- **P7 / F24** — The inbound pod letter now pauses the game and its Jump to location works: pause comes from a new `LetterDef`'s `pauseMode` rather than a tick-manager call, and the look target is the pawn, which the camera resolves through its container chain.
+- **P8** — Integration, documentation and the final gate.
+- Also fixed along the way — defects that were not the assignment:
+  - A shipped 1.0 defect: a job posting could return and hire an applicant who could not do the advertised work. `MeetsRequirement(Pawn)` existed but was never called after materialisation. Fixed at `16209e7`.
+  - A payroll self-test that hired a worker and abandoned it on the map; the pawn only became countable once something advanced the clock far enough for it to walk off the edge.
+  - An equipment assertion that had been silently SKIPPING since P5, because a production signature changed and its reflection call did not.
+  - S3's teardown destroyed every skyfaller absent from a start-of-fixture snapshot — and destroying a transporter destroys its contents, including pawns it never created.
+  - Five labor emergency assertions, and one Elite census assertion, that passed or failed on world luck rather than on behaviour.
+
+Not implemented:
+- P7 ships with NO automated assertions. Four were written and then removed rather than kept: the fixture could not reliably get a drop pod launched, managing it on roughly half of generated worlds across three separate five-world sweeps, and failing on two worlds in five even when the scheduler was bypassed entirely. An assertion that silently depends on world luck looks green and proves nothing. The P7 production fix is grounded in verified vanilla behaviour instead, and its verification is human.
+- The 12-tile conventional emergency threshold was deliberately not retuned. A previous measurement found 0 qualifying conventional routes in 748 examined cases, so emergency routes may be rare in normal play. This pass fixed quote correctness, not availability.
+
+Known limitations:
+- Tier-1 market evidence is not deduplicated by settlement: one supplier can contribute several listings to a single median. Pre-existing, out of scope, recorded not fixed.
+- `LaborProspect` has no unique stable identity, so two prospects from one settlement with identical skills, passions and price receive the same equipment package.
+- `IntercolonyAllSelfTests` reports `notRun` one too high on its `state == null` early-out. Cosmetic, error path only.
+
+Manual test:
+- Everything owed is in `docs/PENDING_PLAYTESTS.md`, including the F24 checks this pass added and the nine items already marked proven in play. Two need preparation rather than just play: loading a save made BEFORE this pass to exercise the schema 59 to 60 emergency applicant migration, and posting an Emergency job while the game is PAUSED, which looks broken but is not.
+- Final gate: whole suite on four fresh worlds — 1768/0/20, 1768/0/20, 1770/0/18, 1770/0/18 — all exit 0, log clean, world-pawn delta 0 on every run, four different economy seeds.
+
