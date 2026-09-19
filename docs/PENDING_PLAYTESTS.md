@@ -2418,6 +2418,34 @@ Also note: the benchmark prefers current listing and open-RFQ evidence, and only
 indicative supplier quote when there is none. If a figure ever looks wrong, which tier produced it is the
 first thing to establish.
 
+### F23: equipment diversity and believability need a human read
+
+Added 2026-09-19 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P4 of the Playtest
+Correction Pass II run, shipped 2026-09-19. Automated evidence is complete — whole suite **1756 passed
+/ 0 failed / 19 skipped**, exit **0**, log clean, world-pawn delta **0** — and both of the plan's
+mutation clauses were discharged: forcing deterministic first-passing selection collapsed
+**Professional** and **Elite** to one identical package each across **32 applicants**, and bypassing the
+authoritative `Classify` left **74 of 80 accepted loadouts under-tier**. Seven diversity assertions now
+pass. What remains cannot be settled by a test.
+
+**Steps.**
+
+1. Inspect a pageful of applicants across **Standard**, **Professional** and **Elite**. Judge whether
+   they look like different people equipped to roughly the same standard, rather than three uniforms.
+   This is the whole point of F23 and the one thing no assertion can answer.
+2. Judge whether the gear looks **BELIEVABLE**, not merely different. A varied package that reads as
+   random junk would pass the diversity assertions and still be wrong.
+3. Confirm **Elite** workers read as clearly above average overall without being fully best-in-slot, and
+   that a **Professional** worker can carry an ordinary piece without looking broken.
+4. Confirm no civilian arrives carrying an offensive weapon, at any tier.
+5. Watch for single-use launchers or rockets turning up as a routine primary weapon. They are penalised
+   by generic signals rather than by a blacklist, so an unusual item slipping through is a scoring
+   question worth reporting rather than an obvious bug.
+
+Also note: applicants at the same tier from the same settlement with identical skills, passions and
+price can still receive the same package, because a prospect has no unique stable identity. Genuinely
+distinct applicants vary; identical ones do not.
+
 ---
 
 ## Proven in play
