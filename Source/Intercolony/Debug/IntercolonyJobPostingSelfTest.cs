@@ -164,6 +164,10 @@ namespace Intercolony
             "emergency hire carries the applicant's frozen arrival duration";
         private const string FrozenEmergencySnapshotLabel =
             "emergency hire does not re-derive the frozen arrival quote at hire";
+        private const string FrozenEmergencyQuoteRoundTripLabel =
+            "S1: frozen emergency quote survives save/load before acceptance";
+        private const string FrozenEmergencyReloadHireLabel =
+            "S2: accepting after reload preserves the exact route and timing";
         private const string OrdinaryArrivalLabel =
             "ordinary hire keeps conventional travelDays arrival";
 
@@ -2896,6 +2900,9 @@ namespace Intercolony
                             }
                             else
                             {
+                                CheckFrozenEmergencyArrivalSaveLoad(
+                                    r, state, map, emergencyPosting, emergencyApplicant);
+
                                 EmploymentArrivalTransport frozenTransport =
                                     emergencyApplicant.emergencyArrivalTransport;
                                 int frozenArrivalTicks = emergencyApplicant.emergencyArrivalTicks;
@@ -3158,12 +3165,208 @@ namespace Intercolony
             }
         }
 
+        private static void CheckFrozenEmergencyArrivalSaveLoad(
+            Results r, IntercolonyWorldComponent state, Map map,
+            JobPosting savedPosting, JobApplicant savedApplicant)
+        {
+            if (Scribe.saver == null || Scribe.loader == null)
+            {
+                SkipFrozenEmergencyPersistenceAssertions(
+                    r, "RimWorld Scribe.saver or Scribe.loader was unavailable");
+                return;
+            }
+
+            if (savedPosting == null || savedApplicant == null || savedApplicant.pawn == null)
+            {
+                SkipFrozenEmergencyPersistenceAssertions(
+                    r, "the direct emergency applicant fixture was incomplete before save/load");
+                return;
+            }
+
+            // These are deliberately plain pre-save locals. The post-load assertions must not
+            // compare the loaded object with itself or derive the expected ETA through production.
+            bool expectedAvailable = savedApplicant.emergencyArrivalAvailable;
+            EmploymentArrivalTransport expectedTransport =
+                savedApplicant.emergencyArrivalTransport;
+            int expectedArrivalTicks = savedApplicant.emergencyArrivalTicks;
+            string expectedMethodLabel = savedApplicant.emergencyArrivalMethodLabel;
+            int expectedTravelDays = savedApplicant.travelDays;
+            int ordinaryArrivalTicks = expectedTravelDays * GenDate.TicksPerDay;
+
+            // JobPosting owns the applicant and deep-saves it. JobApplicant's pawn is a reference,
+            // while the real game deep-saves that pawn under WorldPawns separately. A one-pawn deep
+            // collection mirrors that separate save owner so this isolated Scribe file can resolve
+            // the reloaded applicant's pawn before the hire assertion.
+            List<Pawn> savedWorldPawns = new List<Pawn> { savedApplicant.pawn };
+            List<Pawn> loadedWorldPawns = null;
+            JobPosting loadedPosting = null;
+            JobApplicant loadedApplicant = null;
+            EmploymentContract loadedContract = null;
+            EmploymentArrivalTransport actualTransport = EmploymentArrivalTransport.Conventional;
+            int actualArrivalTicks = -1;
+            string failure = null;
+            string hireFailure = null;
+            string path = Path.Combine(
+                Path.GetTempPath(), $"Intercolony-FrozenEmergencyArrival-{Guid.NewGuid():N}.xml");
+
+            try
+            {
+                Scribe.saver.InitSaving(path, "intercolonyFrozenEmergencyArrivalTest");
+                Scribe_Collections.Look(ref savedWorldPawns, "worldPawns", LookMode.Deep);
+                Scribe_Deep.Look(ref savedPosting, "posting");
+                Scribe.saver.FinalizeSaving();
+
+                Scribe.loader.InitLoading(path);
+                Scribe_Collections.Look(ref loadedWorldPawns, "worldPawns", LookMode.Deep);
+                Scribe_Deep.Look(ref loadedPosting, "posting");
+                Scribe.loader.FinalizeLoading();
+            }
+            catch (Exception ex)
+            {
+                failure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                Scribe.ForceStop();
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+
+            int loadedApplicantCount = loadedPosting?.Applicants?.Count ?? 0;
+            if (loadedApplicantCount > 0)
+            {
+                loadedApplicant = loadedPosting.Applicants[0];
+            }
+
+            bool quoteRoundTripped = failure == null &&
+                loadedApplicantCount == 1 &&
+                loadedApplicant != null &&
+                loadedApplicant.emergencyArrivalAvailable == expectedAvailable &&
+                loadedApplicant.emergencyArrivalTransport == expectedTransport &&
+                loadedApplicant.emergencyArrivalTicks == expectedArrivalTicks &&
+                loadedApplicant.emergencyArrivalMethodLabel == expectedMethodLabel;
+            r.Check(
+                quoteRoundTripped,
+                FrozenEmergencyQuoteRoundTripLabel,
+                $"loaded applicants {loadedApplicantCount}; loaded " +
+                $"{loadedApplicant?.emergencyArrivalAvailable ?? false}/" +
+                $"{loadedApplicant?.emergencyArrivalTransport.ToString() ?? "missing"}/" +
+                $"{loadedApplicant?.emergencyArrivalTicks.ToString() ?? "missing"}/" +
+                $"\"{loadedApplicant?.emergencyArrivalMethodLabel ?? "missing"}\"; expected " +
+                $"{expectedAvailable}/{expectedTransport}/{expectedArrivalTicks}/" +
+                $"\"{expectedMethodLabel}\"; failure {failure ?? "none"}");
+
+            bool exactRouteAndTiming = false;
+            try
+            {
+                if (failure != null)
+                {
+                    hireFailure = $"save/load failed: {failure}";
+                }
+                else if (loadedPosting == null || loadedApplicantCount != 1 ||
+                    loadedApplicant?.pawn == null)
+                {
+                    hireFailure = "the reloaded posting did not contain an applicant with a pawn";
+                }
+                else
+                {
+                    EmploymentEquipmentQuote equipmentQuote =
+                        EmploymentEquipmentService.Quote(loadedApplicant.pawn);
+                    int upFront = WageStructureUtility.UpFrontCost(
+                        loadedPosting.wageStructure,
+                        loadedApplicant.openMarketAsk,
+                        loadedPosting.termDays);
+                    EmploymentHireCostQuote hireQuote = equipmentQuote == null
+                        ? null
+                        : EmploymentEquipmentService.QuoteHireCost(upFront, equipmentQuote);
+                    if (hireQuote == null)
+                    {
+                        hireFailure = "the reloaded applicant's hire-cost quote could not be built";
+                    }
+                    else
+                    {
+                        IntercolonyLaborSelfTestSupport.EnsureSilver(
+                            map,
+                            IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
+                        int available = PurchaseOrderService.CountColonySilver(map);
+                        if (available < hireQuote.totalDue)
+                        {
+                            hireFailure =
+                                $"could not stage the reloaded hire cost: {available} silver " +
+                                $"{hireQuote.totalDue} needed";
+                        }
+                        else
+                        {
+                            loadedContract = EmploymentService.TryHireApplicant(
+                                state,
+                                loadedApplicant,
+                                loadedPosting,
+                                map,
+                                out hireFailure,
+                                hireQuote);
+                            if (loadedContract != null)
+                            {
+                                actualTransport = loadedContract.arrivalTransport;
+                                actualArrivalTicks = loadedContract.arrivalTick -
+                                    loadedContract.hiredTick;
+                                exactRouteAndTiming =
+                                    actualTransport == expectedTransport &&
+                                    actualArrivalTicks == expectedArrivalTicks;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                hireFailure = $"{ex.GetType().Name}: {ex.Message}";
+            }
+            finally
+            {
+                CleanupApplicantHireFixture(
+                    state,
+                    loadedPosting,
+                    loadedApplicant,
+                    loadedContract,
+                    "self-test reloaded frozen emergency arrival cleanup");
+
+                if (loadedWorldPawns != null)
+                {
+                    foreach (Pawn pawn in loadedWorldPawns)
+                    {
+                        DiscardEquipmentFixturePawn(pawn);
+                    }
+                }
+            }
+
+            string actualContractDescription = loadedContract == null
+                ? "missing"
+                : $"{actualTransport}/{actualArrivalTicks} ticks";
+            r.Check(
+                exactRouteAndTiming,
+                FrozenEmergencyReloadHireLabel,
+                $"reloaded applicant contract {actualContractDescription}; expected " +
+                $"{expectedTransport}/{expectedArrivalTicks} ticks; ordinary fallback " +
+                $"{expectedTravelDays}d = {ordinaryArrivalTicks} ticks; " +
+                $"hire failure {hireFailure ?? "none"}");
+        }
+
         private static void SkipFrozenEmergencyArrivalAssertions(
             Results r, string reason)
         {
             r.Skip(FrozenEmergencyTransportLabel, reason);
             r.Skip(FrozenEmergencyDurationLabel, reason);
             r.Skip(FrozenEmergencySnapshotLabel, reason);
+            SkipFrozenEmergencyPersistenceAssertions(r, reason);
+        }
+
+        private static void SkipFrozenEmergencyPersistenceAssertions(
+            Results r, string reason)
+        {
+            r.Skip(FrozenEmergencyQuoteRoundTripLabel, reason);
+            r.Skip(FrozenEmergencyReloadHireLabel, reason);
         }
 
         private static void CleanupApplicantHireFixture(
