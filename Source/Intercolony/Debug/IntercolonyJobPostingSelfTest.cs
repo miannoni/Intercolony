@@ -158,6 +158,14 @@ namespace Intercolony
         private const int EquipmentBalanceMinimumCensus = 50;
         private const int EquipmentTierSampleSize = 4096;
         private const int EquipmentTierSampleSeed = 0x45_51_54_31;
+        private const string FrozenEmergencyTransportLabel =
+            "emergency hire carries the applicant's frozen arrival transport";
+        private const string FrozenEmergencyDurationLabel =
+            "emergency hire carries the applicant's frozen arrival duration";
+        private const string FrozenEmergencySnapshotLabel =
+            "emergency hire does not re-derive the frozen arrival quote at hire";
+        private const string OrdinaryArrivalLabel =
+            "ordinary hire keeps conventional travelDays arrival";
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
@@ -199,6 +207,7 @@ namespace Intercolony
                 CheckSilenceIsExplained(r, state);
                 CheckLifecycle(r, state);
                 CheckApplicantOwnAsk(r, state, map);
+                CheckFrozenEmergencyArrivalOnHire(r, state, map);
                 CheckLoadPruner(r, state);
             }
             catch (System.Exception ex)
@@ -2714,6 +2723,473 @@ namespace Intercolony
                 $"seed {state.EconomySeed}, refresh {state.RefreshCount}; " +
                 $"set {(sameSet ? "same" : "different")}; order {(sameOrder ? "same" : "different")}; " +
                 $"first differing position {FirstApplicantDifference(first.values, second.values)}");
+        }
+
+        private static void CheckFrozenEmergencyArrivalOnHire(
+            Results r, IntercolonyWorldComponent state, Map map)
+        {
+            const int termDays = 20;
+
+            if (map == null)
+            {
+                SkipFrozenEmergencyArrivalAssertions(
+                    r, "the current map was null, so hire payment could not be staged");
+                r.Skip(OrdinaryArrivalLabel,
+                    "the current map was null, so hire payment could not be staged");
+                return;
+            }
+
+            if (Find.WorldPawns == null)
+            {
+                SkipFrozenEmergencyArrivalAssertions(
+                    r, "Find.WorldPawns was null, so hired fixture pawns could not be cleaned up");
+                r.Skip(OrdinaryArrivalLabel,
+                    "Find.WorldPawns was null, so hired fixture pawns could not be cleaned up");
+                return;
+            }
+
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            if (censusField == null || censusRefreshField == null)
+            {
+                SkipFrozenEmergencyArrivalAssertions(
+                    r, "LaborCandidateService controlled census fields were not found");
+                r.Skip(OrdinaryArrivalLabel,
+                    "LaborCandidateService controlled census fields were not found");
+                return;
+            }
+
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            int savedSilver = PurchaseOrderService.CountColonySilver(map);
+            const int emergencyFixtureTravelDays = 3;
+            const int emergencyFixtureArrivalTicks = 12_345;
+            const float emergencyLiveDistanceDecoy = 999f;
+            LaborProspect emergencySource = null;
+            LaborProspect ordinarySource = null;
+
+            try
+            {
+                List<LaborProspect> census = LaborCandidateService.Census(state);
+                if (census == null || census.Count == 0)
+                {
+                    SkipFrozenEmergencyArrivalAssertions(
+                        r, "the current census had no prospect to build a hire fixture");
+                    r.Skip(OrdinaryArrivalLabel,
+                        "the current census had no prospect to build a hire fixture");
+                    return;
+                }
+
+                foreach (LaborProspect prospect in census)
+                {
+                    if (prospect == null || prospect.faction == null || prospect.settlementId < 0)
+                    {
+                        continue;
+                    }
+
+                    Settlement source = IntercolonyMarketAccess.FindSettlement(
+                        prospect.settlementId);
+                    if (source == null)
+                    {
+                        continue;
+                    }
+
+                    if (ordinarySource == null)
+                    {
+                        ordinarySource = prospect;
+                    }
+
+                    if (emergencySource == null &&
+                        Find.FactionManager?.AllFactionsListForReading?.Contains(prospect.faction) ==
+                            true &&
+                        IntercolonyMarketAccess.IsAccessible(source, out _))
+                    {
+                        // This source only supplies valid settlement/faction metadata and a pawn.
+                        // Emergency route availability is deliberately not part of this fixture.
+                        emergencySource = prospect;
+                    }
+                }
+
+                if (emergencySource == null)
+                {
+                    SkipFrozenEmergencyArrivalAssertions(
+                        r,
+                        "the current census had no accessible settlement with a registered faction " +
+                        "to build the direct emergency hire fixture");
+                }
+                else
+                {
+                    Pawn emergencyPawn = null;
+                    JobPosting emergencyPosting = null;
+                    JobApplicant emergencyApplicant = null;
+                    EmploymentContract emergencyContract = null;
+
+                    try
+                    {
+                        Rand.PushState(0xF24_2);
+                        try
+                        {
+                            emergencyPawn = emergencySource.Materialise();
+                        }
+                        finally
+                        {
+                            Rand.PopState();
+                        }
+
+                        if (emergencyPawn == null)
+                        {
+                            SkipFrozenEmergencyArrivalAssertions(
+                                r,
+                                "the selected accessible prospect could not materialise a pawn");
+                        }
+                        else
+                        {
+                            state.Postings.Clear();
+                            emergencyPosting = new JobPosting
+                            {
+                                id = state.NextId(),
+                                termDays = termDays,
+                                wageStructure = WageStructure.Daily,
+                                combatClause = CombatClause.Civilian,
+                                requestedEquipmentLevel = LaborEquipmentLevel.Any,
+                                emergencyDispatch = true,
+                                postedTick = GenTicks.TicksGame,
+                                expiryTick = -1,
+                                status = JobPostingStatus.Open
+                            };
+                            state.AddPosting(emergencyPosting);
+
+                            emergencyApplicant = new JobApplicant
+                            {
+                                pawn = emergencyPawn,
+                                settlementId = emergencySource.settlementId,
+                                settlementName = emergencySource.settlementName,
+                                factionName = emergencySource.factionName,
+                                faction = emergencySource.faction,
+                                // Deliberately unrelated to the frozen quote. A hire-time quote
+                                // derived from this live distance cannot reproduce the fixture ETA.
+                                distanceTiles = emergencyLiveDistanceDecoy,
+                                travelDays = emergencyFixtureTravelDays,
+                                emergencyArrivalAvailable = true,
+                                emergencyArrivalTransport = EmploymentArrivalTransport.DropPod,
+                                emergencyArrivalTicks = emergencyFixtureArrivalTicks,
+                                emergencyArrivalMethodLabel = "controlled fixture drop-pod",
+                                requiredSkillLevel = 0,
+                                openMarketAsk = 1,
+                                appliedTick = GenTicks.TicksGame
+                            };
+                            emergencyPosting.Applicants.Add(emergencyApplicant);
+
+                            if (!emergencyApplicant.emergencyArrivalAvailable ||
+                                emergencyApplicant.emergencyArrivalTransport !=
+                                EmploymentArrivalTransport.DropPod ||
+                                emergencyApplicant.emergencyArrivalTicks <= 0)
+                            {
+                                SkipFrozenEmergencyArrivalAssertions(
+                                    r,
+                                    "the direct emergency applicant did not retain its frozen " +
+                                    "drop-pod quote");
+                            }
+                            else
+                            {
+                                EmploymentArrivalTransport frozenTransport =
+                                    emergencyApplicant.emergencyArrivalTransport;
+                                int frozenArrivalTicks = emergencyApplicant.emergencyArrivalTicks;
+                                int emergencyTravelDays = emergencyApplicant.travelDays;
+                                float liveDistance = emergencyApplicant.distanceTiles;
+
+                                int upFront = WageStructureUtility.UpFrontCost(
+                                    emergencyPosting.wageStructure,
+                                    emergencyApplicant.openMarketAsk,
+                                    emergencyPosting.termDays);
+                                EmploymentEquipmentQuote equipmentQuote =
+                                    EmploymentEquipmentService.Quote(emergencyApplicant.pawn);
+                                EmploymentHireCostQuote hireQuote = equipmentQuote == null
+                                    ? null
+                                    : EmploymentEquipmentService.QuoteHireCost(
+                                        upFront, equipmentQuote);
+                                if (hireQuote == null)
+                                {
+                                    SkipFrozenEmergencyArrivalAssertions(
+                                        r,
+                                        "the direct emergency applicant's hire-cost quote " +
+                                        "could not be built");
+                                }
+                                else
+                                {
+                                    IntercolonyLaborSelfTestSupport.EnsureSilver(
+                                        map,
+                                        IntercolonyLaborSelfTestSupport.SilverToEnsure(hireQuote));
+                                    int available = PurchaseOrderService.CountColonySilver(map);
+                                    if (available < hireQuote.totalDue)
+                                    {
+                                        SkipFrozenEmergencyArrivalAssertions(
+                                            r,
+                                            $"could not stage the emergency hire cost: {available} " +
+                                            $"silver available, {hireQuote.totalDue} needed");
+                                    }
+                                    else
+                                    {
+                                        emergencyContract = EmploymentService.TryHireApplicant(
+                                            state,
+                                            emergencyApplicant,
+                                            emergencyPosting,
+                                            map,
+                                            out string hireFailure,
+                                            hireQuote);
+                                        if (emergencyContract == null)
+                                        {
+                                            SkipFrozenEmergencyArrivalAssertions(
+                                                r,
+                                                "the direct emergency applicant hire could not be " +
+                                                $"arranged: {hireFailure ?? "no reason"}");
+                                        }
+                                        else
+                                        {
+                                            int actualArrivalTicks =
+                                                emergencyContract.arrivalTick -
+                                                emergencyContract.hiredTick;
+                                            r.Check(
+                                                emergencyContract.arrivalTransport == frozenTransport,
+                                                FrozenEmergencyTransportLabel,
+                                                $"frozen {frozenTransport}; contract " +
+                                                $"{emergencyContract.arrivalTransport}");
+                                            r.Check(
+                                                actualArrivalTicks == frozenArrivalTicks,
+                                                FrozenEmergencyDurationLabel,
+                                                $"frozen {frozenArrivalTicks} ticks; contract " +
+                                                $"{actualArrivalTicks} ticks; ordinary travel " +
+                                                $"{emergencyTravelDays}d");
+                                            r.Check(
+                                                emergencyContract.arrivalTransport == frozenTransport &&
+                                                actualArrivalTicks == frozenArrivalTicks,
+                                                FrozenEmergencySnapshotLabel,
+                                                $"live distance decoy {liveDistance:0.##} tiles; frozen " +
+                                                $"{frozenTransport}/{frozenArrivalTicks} ticks; contract " +
+                                                $"{emergencyContract.arrivalTransport}/" +
+                                                $"{actualArrivalTicks} ticks");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        CleanupApplicantHireFixture(
+                            state,
+                            emergencyPosting,
+                            emergencyApplicant,
+                            emergencyContract,
+                            "self-test frozen emergency arrival cleanup");
+                        if (emergencyApplicant == null && emergencyPawn != null)
+                        {
+                            DiscardEquipmentFixturePawn(emergencyPawn);
+                        }
+                    }
+                }
+
+                if (ordinarySource == null)
+                {
+                    r.Skip(
+                        OrdinaryArrivalLabel,
+                        "the current census had no prospect with a registered settlement " +
+                        "for the ordinary control");
+                }
+                else
+                {
+                    LaborProspect ordinaryFixtureSource = CopyProspectForEmergencyFixture(
+                        ordinarySource,
+                        ordinarySource.settlementId,
+                        ordinarySource.distanceTiles,
+                        ordinarySource.settlementName);
+                    JobPosting ordinaryPosting = null;
+                    JobApplicant ordinaryApplicant = null;
+                    EmploymentContract ordinaryContract = null;
+
+                    try
+                    {
+                        state.Postings.Clear();
+                        censusField.SetValue(
+                            null, new List<LaborProspect> { ordinaryFixtureSource });
+                        censusRefreshField.SetValue(null, state.RefreshCount);
+                        ordinaryPosting = JobPostingService.TryPost(
+                            state,
+                            null,
+                            0,
+                            termDays,
+                            WageStructure.Daily,
+                            CombatClause.Civilian,
+                            out string ordinaryFailure,
+                            emergencyDispatch: false);
+
+                        if (ordinaryPosting == null)
+                        {
+                            r.Skip(
+                                OrdinaryArrivalLabel,
+                                "TryPost refused the controlled ordinary fixture: " +
+                                $"{ordinaryFailure ?? "no failure reason"}");
+                        }
+                        else
+                        {
+                            JobPostingService.MatchAll(state);
+                            if (ordinaryPosting.Applicants.Count == 0)
+                            {
+                                r.Skip(
+                                    OrdinaryArrivalLabel,
+                                    "the controlled ordinary fixture produced no applicant");
+                            }
+                            else
+                            {
+                                ordinaryApplicant = ordinaryPosting.Applicants[0];
+                                if (ordinaryApplicant == null || ordinaryApplicant.pawn == null)
+                                {
+                                    r.Skip(
+                                        OrdinaryArrivalLabel,
+                                        "the controlled ordinary applicant had no pawn to pass " +
+                                        "through hiring");
+                                }
+                                else
+                                {
+                                    int ordinaryTravelDays = ordinaryApplicant.travelDays;
+                                    int expectedOrdinaryArrivalTicks =
+                                        ordinaryTravelDays * GenDate.TicksPerDay;
+                                    int upFront = WageStructureUtility.UpFrontCost(
+                                        ordinaryPosting.wageStructure,
+                                        ordinaryApplicant.openMarketAsk,
+                                        ordinaryPosting.termDays);
+                                    EmploymentEquipmentQuote equipmentQuote =
+                                        EmploymentEquipmentService.Quote(ordinaryApplicant.pawn);
+                                    EmploymentHireCostQuote hireQuote = equipmentQuote == null
+                                        ? null
+                                        : EmploymentEquipmentService.QuoteHireCost(
+                                            upFront, equipmentQuote);
+                                    if (hireQuote == null)
+                                    {
+                                        r.Skip(
+                                            OrdinaryArrivalLabel,
+                                            "the controlled ordinary applicant's hire-cost " +
+                                            "quote could not be built");
+                                    }
+                                    else
+                                    {
+                                        IntercolonyLaborSelfTestSupport.EnsureSilver(
+                                            map,
+                                            IntercolonyLaborSelfTestSupport.SilverToEnsure(
+                                                hireQuote));
+                                        int available = PurchaseOrderService.CountColonySilver(map);
+                                        if (available < hireQuote.totalDue)
+                                        {
+                                            r.Skip(
+                                                OrdinaryArrivalLabel,
+                                                $"could not stage the ordinary hire cost: {available} " +
+                                                $"silver available, {hireQuote.totalDue} needed");
+                                        }
+                                        else
+                                        {
+                                            ordinaryContract = EmploymentService.TryHireApplicant(
+                                                state,
+                                                ordinaryApplicant,
+                                                ordinaryPosting,
+                                                map,
+                                                out string hireFailure,
+                                                hireQuote);
+                                            if (ordinaryContract == null)
+                                            {
+                                                r.Skip(
+                                                    OrdinaryArrivalLabel,
+                                                    "the controlled ordinary applicant hire could " +
+                                                    $"not be arranged: {hireFailure ?? "no reason"}");
+                                            }
+                                            else
+                                            {
+                                                int actualArrivalTicks =
+                                                    ordinaryContract.arrivalTick -
+                                                    ordinaryContract.hiredTick;
+                                                r.Check(
+                                                    !ordinaryApplicant.emergencyArrivalAvailable &&
+                                                    ordinaryContract.arrivalTransport ==
+                                                        EmploymentArrivalTransport.Conventional &&
+                                                    actualArrivalTicks == expectedOrdinaryArrivalTicks,
+                                                    OrdinaryArrivalLabel,
+                                                    $"ordinary quote available " +
+                                                    $"{ordinaryApplicant.emergencyArrivalAvailable}; " +
+                                                    $"travel {ordinaryTravelDays}d; expected " +
+                                                    $"{expectedOrdinaryArrivalTicks} ticks; contract " +
+                                                    $"{ordinaryContract.arrivalTransport}/" +
+                                                    $"{actualArrivalTicks} ticks");
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        CleanupApplicantHireFixture(
+                            state,
+                            ordinaryPosting,
+                            ordinaryApplicant,
+                            ordinaryContract,
+                            "self-test ordinary arrival cleanup");
+                    }
+                }
+            }
+            finally
+            {
+                RestorePostingList(
+                    state, savedPostings, "self-test frozen arrival cleanup");
+                censusField.SetValue(null, savedCensus);
+                censusRefreshField.SetValue(null, savedCensusRefreshCount);
+
+                int returned = IntercolonyLaborSelfTestSupport.RestoreStorageSilver(
+                    map, savedSilver);
+                if (returned > 0)
+                {
+                    r.Info($"returned {returned} silver to restore the arrival fixtures.");
+                }
+
+                IntercolonyLaborSelfTestSupport.ResetLedger();
+            }
+        }
+
+        private static void SkipFrozenEmergencyArrivalAssertions(
+            Results r, string reason)
+        {
+            r.Skip(FrozenEmergencyTransportLabel, reason);
+            r.Skip(FrozenEmergencyDurationLabel, reason);
+            r.Skip(FrozenEmergencySnapshotLabel, reason);
+        }
+
+        private static void CleanupApplicantHireFixture(
+            IntercolonyWorldComponent state, JobPosting posting, JobApplicant applicant,
+            EmploymentContract contract, string note)
+        {
+            if (posting != null && applicant != null)
+            {
+                posting.Applicants.Remove(applicant);
+            }
+
+            if (contract != null)
+            {
+                EmploymentService.End(contract, EmploymentStatus.Failed, note);
+                state.Employments.Remove(contract);
+            }
+            else
+            {
+                applicant?.Discard();
+            }
+
+            if (posting != null)
+            {
+                JobPostingService.Close(posting, JobPostingStatus.Withdrawn, note);
+                state.Postings.Remove(posting);
+            }
         }
 
         /// <summary>F25's contract rate must carry the quote the applicant brought with them.</summary>
