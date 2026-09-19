@@ -375,6 +375,8 @@ namespace Intercolony
                         // baseline promise. It is the most restrictive CanSupply clause.
                         prospect.equipmentTier = LaborEquipmentTierService.RollPromisedTier(
                             profile, CombatClause.Civilian);
+                        prospect.censusRefreshCount = state.RefreshCount;
+                        prospect.censusIndex = census.Count;
                         census.Add(prospect);
                     }
                 }

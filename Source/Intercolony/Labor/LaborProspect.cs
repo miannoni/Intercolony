@@ -57,6 +57,14 @@ namespace Intercolony
         /// </summary>
         public LaborEquipmentLevel equipmentTier = LaborEquipmentLevel.None;
 
+        /// <summary>
+        /// Runtime provenance within the deterministic census. These values are not saved with a
+        /// prospect because the census itself is session state; completed applicants copy them so a
+        /// transient emergency queue can be reconstructed without applying the same record twice.
+        /// </summary>
+        internal int censusRefreshCount = -1;
+        internal int censusIndex = -1;
+
         public int LevelOf(SkillDef skill)
         {
             if (skill == null || skillLevels == null || skill.index >= skillLevels.Length)

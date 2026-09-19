@@ -29,6 +29,12 @@ namespace Intercolony
         public const int MaxWaitingApplicants = 6;
 
         /// <summary>
+        /// One expensive applicant attempt per world tick keeps equipment fulfilment from stacking
+        /// into the click-sized multi-applicant stall measured on the old path.
+        /// </summary>
+        public const int EmergencyMaterialisationsPerTick = 1;
+
+        /// <summary>
         /// Days an applicant will wait before withdrawing. Long enough that the player need not
         /// watch the tab, short enough that a forgotten posting stops holding people hostage.
         /// </summary>
@@ -135,7 +141,8 @@ namespace Intercolony
         /// The census is deliberately reused rather than rebuilt: posting an emergency job must
         /// not manufacture a second population just because it was created between refreshes.
         /// With one posting there is no cross-posting choice to resolve, but the same prospect
-        /// predicate, queue room, shuffle and Apply path are still used.
+        /// predicate, queue room and shuffle are still used. The selected census records are queued;
+        /// the Apply path runs later from the world component tick.
         /// </summary>
         internal static void MatchImmediately(
             IntercolonyWorldComponent state, JobPosting posting)
@@ -176,27 +183,27 @@ namespace Intercolony
                         continue;
                     }
 
-                    interested.Add(new Interest { worker = worker, ask = decision.ask });
+                    interested.Add(new Interest
+                    {
+                        worker = worker,
+                        ask = decision.ask,
+                        censusRefreshCount = worker.censusRefreshCount,
+                        censusIndex = worker.censusIndex
+                    });
                 }
             }
 
-            int arrived = 0;
             Rand.PushState(Gen.HashCombineInt(state.EconomySeed, state.RefreshCount) ^ ApplicantShuffleSalt);
             try
             {
                 using (PostingTimings.Phase(PostingTimingPhase.CandidateApplicationSelection))
                 {
-                    arrived = ApplyInterested(state, posting, interested, ref attempt);
+                    QueueInterested(state, posting, interested, standing, ref attempt);
                 }
             }
             finally
             {
                 Rand.PopState();
-            }
-
-            using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
-            {
-                Report(state, posting, arrived, standing, attempt);
             }
         }
 
@@ -259,8 +266,9 @@ namespace Intercolony
             // scarce thing. A worker who wanted the job that filled up simply does not apply.
             Dictionary<int, List<Interest>> interested = new Dictionary<int, List<Interest>>();
 
-            foreach (LaborProspect worker in world)
+            for (int workerIndex = 0; workerIndex < world.Count; workerIndex++)
             {
+                LaborProspect worker = world[workerIndex];
                 if (worker == null)
                 {
                     continue;
@@ -335,7 +343,13 @@ namespace Intercolony
                     interested[best.id] = queue;
                 }
 
-                queue.Add(new Interest { worker = worker, ask = bestAsk });
+                queue.Add(new Interest
+                {
+                    worker = worker,
+                    ask = bestAsk,
+                    censusRefreshCount = worker.censusRefreshCount,
+                    censusIndex = worker.censusIndex
+                });
             }
 
             // Phase two: each posting takes a deterministic spread from the qualified pool, not
@@ -352,13 +366,43 @@ namespace Intercolony
             {
                 foreach (JobPosting posting in open)
                 {
-                    if (!interested.TryGetValue(posting.id, out List<Interest> queue))
+                    if (posting.HasPendingMaterialisation)
                     {
                         continue;
                     }
 
+                    if (posting.NeedsEmergencyMatchRebuild &&
+                        posting.HasUntrackedApplicantIdentity)
+                    {
+                        // Do not let a forced refresh run before the first world tick duplicate
+                        // applicants from a pre-queue save whose provenance is unavailable.
+                        posting.MarkEmergencyMatchInitialised();
+                        continue;
+                    }
+
+                    if (posting.emergencyDispatch && posting.HasUntrackedApplicantIdentity)
+                    {
+                        // A legacy emergency applicant has no census identity that can be matched
+                        // against this refresh. Keep the posting fenced while it remains visible;
+                        // once the player hires or rejects it, matching can safely resume.
+                        continue;
+                    }
+
                     MatchAttempt attempt = attempts[posting.id];
-                    int taken = ApplyInterested(state, posting, queue, ref attempt);
+                    if (posting.emergencyDispatch)
+                    {
+                        interested.TryGetValue(posting.id, out List<Interest> queue);
+                        QueueInterested(state, posting, queue, standing, ref attempt);
+                        attempts[posting.id] = attempt;
+                        continue;
+                    }
+
+                    if (!interested.TryGetValue(posting.id, out List<Interest> ordinaryQueue))
+                    {
+                        continue;
+                    }
+
+                    int taken = ApplyInterested(state, posting, ordinaryQueue, ref attempt);
                     attempts[posting.id] = attempt;
 
                     if (taken > 0)
@@ -374,6 +418,13 @@ namespace Intercolony
 
             foreach (JobPosting posting in open)
             {
+                if (posting.emergencyDispatch)
+                {
+                    // QueueInterested reports an empty emergency match immediately, and a
+                    // non-empty one reports after the tick-bound materialisation queue drains.
+                    continue;
+                }
+
                 gained.TryGetValue(posting.id, out int arrived);
                 MatchAttempt attempt = attempts[posting.id];
                 Report(state, posting, arrived, standing, attempt);
@@ -385,6 +436,8 @@ namespace Intercolony
         {
             public LaborProspect worker;
             public int ask;
+            public int censusRefreshCount;
+            public int censusIndex;
         }
 
         private struct MatchAttempt
@@ -522,7 +575,9 @@ namespace Intercolony
             int taken = 0;
             for (int i = 0; i < queue.Count && taken < room; i++)
             {
-                ApplyResult result = Apply(state, posting, queue[i].worker, queue[i].ask);
+                ApplyResult result = Apply(
+                    state, posting, queue[i].worker, queue[i].ask,
+                    queue[i].censusRefreshCount, queue[i].censusIndex);
                 switch (result)
                 {
                     case ApplyResult.Accepted:
@@ -544,6 +599,249 @@ namespace Intercolony
         }
 
         /// <summary>
+        /// Freezes the cheap matching result for an emergency posting without building a pawn.
+        /// The queue keeps every selected prospect, not only the visible room, because a failed
+        /// equipment attempt must not reduce the number of valid applicants compared with the old
+        /// synchronous walk.
+        /// </summary>
+        private static bool QueueInterested(
+            IntercolonyWorldComponent state, JobPosting posting, List<Interest> queue,
+            float standing, ref MatchAttempt attempt)
+        {
+            if (state == null || posting == null || !posting.IsOpen)
+            {
+                return false;
+            }
+
+            int room = Room(posting);
+            if (room <= 0)
+            {
+                posting.MarkEmergencyMatchInitialised();
+                ReportImmediately(state, posting, 0, standing, attempt);
+                return false;
+            }
+
+            if (queue == null)
+            {
+                posting.MarkEmergencyMatchInitialised();
+                ReportImmediately(state, posting, 0, standing, attempt);
+                return false;
+            }
+
+            for (int i = queue.Count - 1; i > 0; i--)
+            {
+                int j = Rand.RangeInclusive(0, i);
+                Interest swap = queue[i];
+                queue[i] = queue[j];
+                queue[j] = swap;
+            }
+
+            PendingJobPostingMatch pending = new PendingJobPostingMatch
+            {
+                standing = standing,
+                skillQualified = attempt.skillQualified,
+                tierRejected = attempt.tierRejected,
+                emergencyReachRejected = attempt.emergencyReachRejected,
+                sourceRejected = attempt.sourceRejected,
+                fulfilmentRejected = attempt.fulfilmentRejected,
+                accepted = attempt.accepted
+            };
+
+            for (int i = 0; i < queue.Count; i++)
+            {
+                Interest interest = queue[i];
+                if (interest.worker == null ||
+                    AlreadyApplied(posting, interest.censusRefreshCount, interest.censusIndex))
+                {
+                    continue;
+                }
+
+                pending.candidates.Add(new PendingJobPostingCandidate
+                {
+                    worker = interest.worker,
+                    ask = interest.ask,
+                    censusRefreshCount = interest.censusRefreshCount,
+                    censusIndex = interest.censusIndex
+                });
+            }
+
+            if (!pending.HasRemaining)
+            {
+                posting.MarkEmergencyMatchInitialised();
+                ReportImmediately(state, posting, 0, standing, attempt);
+                return false;
+            }
+
+            posting.BeginPendingMaterialisation(pending);
+            return true;
+        }
+
+        private static bool AlreadyApplied(
+            JobPosting posting, int censusRefreshCount, int censusIndex)
+        {
+            if (posting == null || censusRefreshCount < 0 || censusIndex < 0)
+            {
+                return false;
+            }
+
+            foreach (JobApplicant applicant in posting.Applicants)
+            {
+                if (applicant != null &&
+                    applicant.sourceCensusRefreshCount == censusRefreshCount &&
+                    applicant.sourceCensusIndex == censusIndex)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Advances at most one emergency prospect globally per world tick. This is called from the
+        /// existing WorldComponentTick owner, so all pawn and Thing work remains on RimWorld's main
+        /// thread and no second scheduler or background execution is introduced.
+        /// </summary>
+        public static void AdvanceMaterialisations(IntercolonyWorldComponent state)
+        {
+            if (state == null || state.Postings == null)
+            {
+                return;
+            }
+
+            int materialisationsThisTick = 0;
+            foreach (JobPosting posting in state.Postings)
+            {
+                if (posting == null)
+                {
+                    continue;
+                }
+
+                if (!posting.IsOpen)
+                {
+                    if (posting.PendingMaterialisation != null || posting.Applicants.Count > 0)
+                    {
+                        posting.ClearPendingMaterialisation();
+                        posting.DiscardApplicants();
+                    }
+
+                    continue;
+                }
+
+                if (posting.NeedsEmergencyMatchRebuild)
+                {
+                    // A legacy applicant has no source identity. It predates the reconstructable
+                    // queue and is treated as a completed search rather than risk duplicating it.
+                    if (posting.HasUntrackedApplicantIdentity)
+                    {
+                        posting.MarkEmergencyMatchInitialised();
+                    }
+                    else
+                    {
+                        MatchImmediately(state, posting);
+                    }
+                }
+
+                if (!posting.HasPendingMaterialisation)
+                {
+                    continue;
+                }
+
+                AdvanceOneMaterialisation(state, posting);
+                materialisationsThisTick++;
+                if (materialisationsThisTick >= EmergencyMaterialisationsPerTick)
+                {
+                    return;
+                }
+            }
+        }
+
+        private static void AdvanceOneMaterialisation(
+            IntercolonyWorldComponent state, JobPosting posting)
+        {
+            PendingJobPostingMatch pending = posting.PendingMaterialisation;
+            if (pending == null)
+            {
+                return;
+            }
+
+            if (Room(posting) <= 0 || !pending.HasRemaining)
+            {
+                CompletePendingMatch(state, posting, pending);
+                return;
+            }
+
+            PendingJobPostingCandidate candidate = pending.TakeNext();
+            if (candidate == null || candidate.worker == null)
+            {
+                if (!pending.HasRemaining)
+                {
+                    CompletePendingMatch(state, posting, pending);
+                }
+
+                return;
+            }
+
+            ApplyResult result = Apply(
+                state, posting, candidate.worker, candidate.ask,
+                candidate.censusRefreshCount, candidate.censusIndex);
+            switch (result)
+            {
+                case ApplyResult.Accepted:
+                    pending.accepted++;
+                    break;
+                case ApplyResult.SourceRejected:
+                    pending.sourceRejected++;
+                    break;
+                case ApplyResult.FulfilmentRejected:
+                    pending.fulfilmentRejected++;
+                    break;
+            }
+
+            if (!posting.IsOpen)
+            {
+                posting.ClearPendingMaterialisation();
+                posting.DiscardApplicants();
+                return;
+            }
+
+            if (Room(posting) <= 0 || !pending.HasRemaining)
+            {
+                CompletePendingMatch(state, posting, pending);
+            }
+        }
+
+        private static void CompletePendingMatch(
+            IntercolonyWorldComponent state, JobPosting posting, PendingJobPostingMatch pending)
+        {
+            MatchAttempt attempt = new MatchAttempt
+            {
+                skillQualified = pending.skillQualified,
+                tierRejected = pending.tierRejected,
+                emergencyReachRejected = pending.emergencyReachRejected,
+                sourceRejected = pending.sourceRejected,
+                fulfilmentRejected = pending.fulfilmentRejected,
+                accepted = pending.accepted
+            };
+            int arrived = pending.accepted;
+            posting.CompletePendingMaterialisation();
+            if (posting.IsOpen)
+            {
+                ReportImmediately(state, posting, arrived, pending.standing, attempt);
+            }
+        }
+
+        private static void ReportImmediately(
+            IntercolonyWorldComponent state, JobPosting posting, int arrived,
+            float standing, MatchAttempt attempt)
+        {
+            using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
+            {
+                Report(state, posting, arrived, standing, attempt);
+            }
+        }
+
+        /// <summary>
         /// Turns a census record into an actual applicant - the only point at which a pawn is built.
         ///
         /// This is what makes a deep market affordable. The census can be hundreds of workers
@@ -552,7 +850,8 @@ namespace Intercolony
         /// rather than once per worker considered.
         /// </summary>
         private static ApplyResult Apply(
-            IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask)
+            IntercolonyWorldComponent state, JobPosting posting, LaborProspect worker, int ask,
+            int censusRefreshCount, int censusIndex)
         {
             // Any is the legacy equipment path: one generation, no equipment capability gate, no
             // classification and no retry. Existing non-emergency postings load as Any and must
@@ -578,7 +877,8 @@ namespace Intercolony
 
                 using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
                 {
-                    AddApplicant(posting, worker, pawn, ask);
+                    AddApplicant(
+                        posting, worker, pawn, ask, censusRefreshCount, censusIndex);
                 }
                 return ApplyResult.Accepted;
             }
@@ -658,7 +958,8 @@ namespace Intercolony
 
             using (PostingTimings.Phase(PostingTimingPhase.FinalApplicantPublication))
             {
-                AddApplicant(posting, worker, applicantPawn, ask);
+                AddApplicant(
+                    posting, worker, applicantPawn, ask, censusRefreshCount, censusIndex);
             }
             return ApplyResult.Accepted;
         }
@@ -727,7 +1028,8 @@ namespace Intercolony
         }
 
         private static void AddApplicant(
-            JobPosting posting, LaborProspect worker, Pawn pawn, int ask)
+            JobPosting posting, LaborProspect worker, Pawn pawn, int ask,
+            int censusRefreshCount, int censusIndex)
         {
             // Nothing else owns this pawn - it was built for this list. KeepForever rather than
             // Decide for the reason the notes give:
@@ -749,7 +1051,9 @@ namespace Intercolony
                 travelDays = worker.travelDays,
                 requiredSkillLevel = posting.SkillLevelOf(pawn),
                 openMarketAsk = ask,
-                appliedTick = GenTicks.TicksGame
+                appliedTick = GenTicks.TicksGame,
+                sourceCensusRefreshCount = censusRefreshCount,
+                sourceCensusIndex = censusIndex
             });
         }
 
@@ -967,13 +1271,25 @@ namespace Intercolony
         /// <summary>Closes a posting and releases anyone still waiting on it.</summary>
         public static void Close(JobPosting posting, JobPostingStatus status, string note)
         {
-            if (posting == null || !posting.IsOpen)
+            if (posting == null)
             {
+                return;
+            }
+
+            if (!posting.IsOpen)
+            {
+                // A Filled/Expired posting can still be closed by a lifecycle caller after its
+                // status changed. Drop any deferred census work and any pawns that were created
+                // before that transition, even though there is no second status transition to log.
+                posting.ClearPendingMaterialisation();
+                posting.DiscardApplicants();
                 return;
             }
 
             posting.status = status;
             posting.outcomeNote = note ?? "";
+
+            posting.ClearPendingMaterialisation();
 
             // Applicants are pinned world pawns; a closed posting that kept them would leak one
             // pawn per unhired applicant, forever, invisibly.

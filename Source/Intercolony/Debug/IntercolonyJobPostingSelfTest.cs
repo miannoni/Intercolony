@@ -120,7 +120,10 @@ namespace Intercolony
         private struct ImmediateEmergencyObservation
         {
             public int eligibleProspects;
-            public int applicantsBeforeMatchAll;
+            public int prospectsQueuedOrMatchedImmediately;
+            public int applicantsAfterTryPost;
+            public int applicantsAfterBoundedTicks;
+            public int ticksDriven;
         }
 
         private struct EmergencyFilterObservation
@@ -1562,7 +1565,8 @@ namespace Intercolony
         private static void CheckEmergencyPostingImmediateMatch(
             Results r, IntercolonyWorldComponent state)
         {
-            const string label = "emergency posting matches immediately and respects the applicant cap";
+            const string label =
+                "emergency posting publishes responses within the materialisation bound and respects the applicant cap";
             if (Find.WorldPawns == null)
             {
                 r.Skip(label,
@@ -1624,16 +1628,43 @@ namespace Intercolony
                 ImmediateEmergencyObservation observation = new ImmediateEmergencyObservation
                 {
                     eligibleProspects = fixture.Count,
-                    applicantsBeforeMatchAll = posting.Applicants.Count
+                    prospectsQueuedOrMatchedImmediately = posting.Applicants.Count +
+                        (posting.PendingMaterialisation?.candidates.Count ?? 0),
+                    applicantsAfterTryPost = posting.Applicants.Count
                 };
                 r.Check(
-                    observation.applicantsBeforeMatchAll > 0 &&
-                    observation.applicantsBeforeMatchAll <= JobPostingService.MaxWaitingApplicants,
+                    observation.prospectsQueuedOrMatchedImmediately == observation.eligibleProspects,
+                    "emergency posting matches all controlled eligible prospects immediately",
+                    $"OBSERVED {observation.prospectsQueuedOrMatchedImmediately} queued or matched " +
+                    $"prospect(s) from {observation.eligibleProspects} controlled eligible " +
+                    $"prospect(s); EXPECTED {observation.eligibleProspects}");
+
+                r.Check(
+                    observation.applicantsAfterTryPost == 0,
+                    "emergency click path publishes no applicant pawn before a world tick",
+                    $"OBSERVED {observation.applicantsAfterTryPost} applicant pawn(s) after TryPost; " +
+                    "EXPECTED 0 before any explicit world tick");
+
+                int applicantCap = JobPostingService.MaxWaitingApplicants;
+                int materialisationsPerTick = JobPostingService.EmergencyMaterialisationsPerTick;
+                int tickBound = materialisationsPerTick > 0
+                    ? (applicantCap + materialisationsPerTick - 1) / materialisationsPerTick
+                    : applicantCap;
+                while (observation.ticksDriven < tickBound &&
+                       posting.Applicants.Count < applicantCap)
+                {
+                    state.WorldComponentTick();
+                    observation.ticksDriven++;
+                }
+
+                observation.applicantsAfterBoundedTicks = posting.Applicants.Count;
+                r.Check(
+                    observation.applicantsAfterBoundedTicks > 0 &&
+                    observation.applicantsAfterBoundedTicks <= applicantCap,
                     label,
-                    $"OBSERVED {observation.applicantsBeforeMatchAll} applicant(s) before any " +
-                    $"MatchAll call from {observation.eligibleProspects} controlled eligible " +
-                    $"prospect(s); EXPECTED 1-{JobPostingService.MaxWaitingApplicants} " +
-                    "applicant(s) immediately");
+                    $"OBSERVED {observation.applicantsAfterBoundedTicks} applicant(s) after " +
+                    $"{observation.ticksDriven}/{tickBound} explicit world tick(s); EXPECTED " +
+                    $"1-{applicantCap} within ceil({applicantCap}/{materialisationsPerTick}) ticks");
             }
             catch (Exception ex)
             {

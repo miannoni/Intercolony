@@ -1738,6 +1738,15 @@ namespace Intercolony
         /// </summary>
         public override void WorldComponentTick()
         {
+            // Emergency posting matching selects its lightweight census records on the click, but
+            // materialises at most one real applicant here per tick. This is the existing world
+            // component owner for bounded periodic work; no second scheduler or worker thread is
+            // needed, and every Pawn/Thing mutation remains on RimWorld's main thread.
+            if (postings.Count > 0)
+            {
+                JobPostingService.AdvanceMaterialisations(this);
+            }
+
             if (GenTicks.IsTickInterval(RefreshIntervalTicks))
             {
                 DoRefresh("scheduled");

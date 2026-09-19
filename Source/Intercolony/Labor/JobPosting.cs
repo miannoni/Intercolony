@@ -22,6 +22,49 @@ namespace Intercolony
     }
 
     /// <summary>
+    /// One lightweight census record waiting to be materialised for an emergency posting.
+    ///
+    /// This is deliberately runtime-only. It contains no Pawn and is never exposed to Scribe;
+    /// a save made while this queue is active rebuilds it from the posting and the deterministic
+    /// census on the next world tick.
+    /// </summary>
+    internal sealed class PendingJobPostingCandidate
+    {
+        public LaborProspect worker;
+        public int ask;
+        public int censusRefreshCount;
+        public int censusIndex;
+    }
+
+    /// <summary>Runtime-only match state for a deferred emergency posting search.</summary>
+    internal sealed class PendingJobPostingMatch
+    {
+        public float standing;
+        public int skillQualified;
+        public int tierRejected;
+        public int emergencyReachRejected;
+        public int sourceRejected;
+        public int fulfilmentRejected;
+        public int accepted;
+        public int nextCandidateIndex;
+
+        public readonly List<PendingJobPostingCandidate> candidates =
+            new List<PendingJobPostingCandidate>();
+
+        public bool HasRemaining => nextCandidateIndex < candidates.Count;
+
+        public PendingJobPostingCandidate TakeNext()
+        {
+            if (!HasRemaining)
+            {
+                return null;
+            }
+
+            return candidates[nextCandidateIndex++];
+        }
+    }
+
+    /// <summary>
     /// A worker who answered a posting (DESIGN.md §35.2).
     ///
     /// **Carries the worker's asking wage, and that quote is the whole inversion.** A
@@ -60,6 +103,13 @@ namespace Intercolony
 
         /// <summary>When they applied, so a stale applicant can be aged out.</summary>
         public int appliedTick;
+
+        /// <summary>
+        /// Identity of the census record that produced this applicant. This is provenance for
+        /// reconstructing a transient emergency search, not ownership of pending work.
+        /// </summary>
+        public int sourceCensusRefreshCount = -1;
+        public int sourceCensusIndex = -1;
 
         public string Name => pawn?.LabelShortCap ?? "?";
 
@@ -151,7 +201,13 @@ namespace Intercolony
             Scribe_Values.Look(ref requiredSkillLevel, "requiredSkillLevel", 0);
             Scribe_Values.Look(ref openMarketAsk, "openMarketAsk", 0);
             Scribe_Values.Look(ref appliedTick, "appliedTick", 0);
+            Scribe_Values.Look(
+                ref sourceCensusRefreshCount, "sourceCensusRefreshCount", -1);
+            Scribe_Values.Look(ref sourceCensusIndex, "sourceCensusIndex", -1);
         }
+
+        internal bool HasSourceCensusIdentity =>
+            sourceCensusRefreshCount >= 0 && sourceCensusIndex >= 0;
 
         /// <summary>An applicant whose pawn did not survive the load has nobody left to hire.</summary>
         public bool IsValidAfterLoad => pawn != null;
@@ -224,7 +280,63 @@ namespace Intercolony
 
         private List<JobApplicant> applicants = new List<JobApplicant>();
 
+        // These fields intentionally have no Scribe calls. A pending search owns only census
+        // records, never pawns, and is rebuilt from this open posting and LaborCandidateService's
+        // deterministic census after a save/load boundary.
+        private PendingJobPostingMatch pendingMaterialisation;
+        private bool emergencyMatchInitialised;
+
         public List<JobApplicant> Applicants => applicants;
+
+        internal PendingJobPostingMatch PendingMaterialisation => pendingMaterialisation;
+
+        internal bool HasPendingMaterialisation =>
+            pendingMaterialisation != null && pendingMaterialisation.HasRemaining;
+
+        internal bool NeedsEmergencyMatchRebuild =>
+            emergencyDispatch && !emergencyMatchInitialised;
+
+        internal bool HasUntrackedApplicantIdentity
+        {
+            get
+            {
+                foreach (JobApplicant applicant in applicants)
+                {
+                    if (applicant != null && !applicant.HasSourceCensusIdentity)
+                    {
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        }
+
+        internal bool IsSearchingApplicants =>
+            HasPendingMaterialisation || NeedsEmergencyMatchRebuild;
+
+        internal void BeginPendingMaterialisation(PendingJobPostingMatch match)
+        {
+            pendingMaterialisation = match;
+            emergencyMatchInitialised = true;
+        }
+
+        internal void MarkEmergencyMatchInitialised()
+        {
+            pendingMaterialisation = null;
+            emergencyMatchInitialised = true;
+        }
+
+        internal void CompletePendingMaterialisation()
+        {
+            pendingMaterialisation = null;
+            emergencyMatchInitialised = true;
+        }
+
+        internal void ClearPendingMaterialisation()
+        {
+            pendingMaterialisation = null;
+        }
 
         public bool IsOpen => status == JobPostingStatus.Open;
 
@@ -269,6 +381,13 @@ namespace Intercolony
             switch (status)
             {
                 case JobPostingStatus.Open:
+                    if (IsSearchingApplicants)
+                    {
+                        return applicants.Count > 0
+                            ? $"Searching... {applicants.Count} applicant(s) found so far"
+                            : $"Searching for applicants... — {ExpiryLabel}";
+                    }
+
                     if (applicants.Count > 0)
                     {
                         return $"{applicants.Count} applicant{(applicants.Count == 1 ? "" : "s")} waiting" +
