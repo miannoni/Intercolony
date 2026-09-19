@@ -3366,6 +3366,12 @@ namespace Intercolony
             string s3ExpectedContractDescription = "missing";
             string s3LoadedContractDescription = "missing";
             int s3EmergencyArrivalLetters = 0;
+            int s3IncomingPodCount = 0;
+            bool s3IncomingPodResolved = false;
+            int s3InitialTicksToImpact = -1;
+            int s3OpenDelay = -1;
+            int s3SpawnDeadline = -1;
+            int s3LifecycleTicksDriven = 0;
             int s3EmployeeArrivalLettersBefore = 0;
             int s3EmployeeArrivalLettersAfter = 0;
             int s3EmployeeArrivalLettersAfterFurther = 0;
@@ -3609,18 +3615,77 @@ namespace Intercolony
                         // WorldComponentUtility -> IntercolonyWorldComponent.WorldComponentTick ->
                         // EmploymentService.Advance. At this hourly boundary it launches the pod.
                         s3TickManager.DoSingleTick();
+
+                        List<DropPodIncoming> matchingIncomingPods =
+                            new List<DropPodIncoming>();
+                        foreach (DropPodIncoming incomingPod in
+                            map.listerThings.GetThingsOfType<DropPodIncoming>())
+                        {
+                            if (incomingPod == null || savedSkyfallers.Contains(incomingPod) ||
+                                incomingPod.innerContainer == null ||
+                                incomingPod.innerContainer.Count == 0 ||
+                                !(incomingPod.innerContainer[0] is ActiveTransporter))
+                            {
+                                continue;
+                            }
+
+                            ActiveTransporterInfo podContents = incomingPod.Contents;
+                            if (podContents == null || podContents.innerContainer == null)
+                            {
+                                continue;
+                            }
+
+                            for (int i = 0; i < podContents.innerContainer.Count; i++)
+                            {
+                                if (object.ReferenceEquals(
+                                    podContents.innerContainer[i], reloadedContractPawn))
+                                {
+                                    matchingIncomingPods.Add(incomingPod);
+                                    break;
+                                }
+                            }
+                        }
+
+                        s3IncomingPodCount = matchingIncomingPods.Count;
                         s3EmergencyArrivalLetters = CountLetterLabel(
                             Find.LetterStack.LettersListForReading, EmergencyArrivalLetterLabel);
 
-                        // Vanilla Skyfaller uses a maximum 220-tick flight. Give it a bounded real map
-                        // tick window, rather than calling its impact or employment helper directly.
-                        for (int i = 0; i < 300 &&
-                            reloadedContract.pawn != null && !reloadedContract.pawn.Spawned; i++)
+                        if (s3IncomingPodCount != 1)
                         {
-                            s3TickManager.DoSingleTick();
+                            s3Failure =
+                                $"expected exactly one newly launched incoming pod containing the " +
+                                $"reloaded contract pawn, found {s3IncomingPodCount}";
                         }
+                        else
+                        {
+                            DropPodIncoming launchedPod = matchingIncomingPods[0];
+                            ActiveTransporterInfo launchedPodContents = launchedPod.Contents;
+                            s3InitialTicksToImpact = launchedPod.ticksToImpact;
+                            s3OpenDelay = launchedPodContents.openDelay;
+                            s3SpawnDeadline = s3InitialTicksToImpact + s3OpenDelay + 1;
+                            s3IncomingPodResolved = true;
 
-                        s3PawnSpawned = reloadedContract.pawn != null && reloadedContract.pawn.Spawned;
+                            // The launch has two live stages: DropPodIncoming flies until impact,
+                            // then its ActiveTransporter opens when age exceeds openDelay. Derive
+                            // the exact real-tick deadline from those objects instead of assuming
+                            // a constant, so both stages are exercised by the real tick path.
+                            while (s3LifecycleTicksDriven < s3SpawnDeadline &&
+                                reloadedContract.pawn != null && !reloadedContract.pawn.Spawned)
+                            {
+                                s3TickManager.DoSingleTick();
+                                s3LifecycleTicksDriven++;
+                            }
+
+                            s3PawnSpawned = reloadedContract.pawn != null &&
+                                reloadedContract.pawn.Spawned;
+                            if (!s3PawnSpawned)
+                            {
+                                s3Failure =
+                                    $"pawn did not spawn after the derived deadline " +
+                                    $"{s3InitialTicksToImpact}+{s3OpenDelay}+1=" +
+                                    $"{s3SpawnDeadline} real ticks";
+                            }
+                        }
                         int completionTick =
                             (s3TickManager.TicksGame / GenDate.TicksPerHour + 1) *
                             GenDate.TicksPerHour;
@@ -3638,6 +3703,7 @@ namespace Intercolony
                             Find.LetterStack.LettersListForReading, EmployeeArrivedLetterLabel);
 
                         s3Passed = contractRoundTripped &&
+                            s3IncomingPodResolved &&
                             s3EmergencyArrivalLetters == 1 &&
                             s3EmployeeArrivalLettersAfter - s3EmployeeArrivalLettersBefore == 1 &&
                             s3EmployeeArrivalLettersAfterFurther -
@@ -3654,6 +3720,9 @@ namespace Intercolony
                     $"{s3EmergencyArrivalLetters}; employee-arrival letters " +
                     $"{s3EmployeeArrivalLettersBefore}/{s3EmployeeArrivalLettersAfter}/" +
                     $"{s3EmployeeArrivalLettersAfterFurther}; pawn spawned {s3PawnSpawned}; " +
+                    $"incoming pods {s3IncomingPodCount}; lifecycle " +
+                    $"{s3InitialTicksToImpact}+{s3OpenDelay}+1={s3SpawnDeadline}, " +
+                    $"ticks driven {s3LifecycleTicksDriven}; " +
                     $"failure {s3Failure ?? "none"}");
                 s3AssertionReported = true;
             }
