@@ -2446,6 +2446,33 @@ Also note: applicants at the same tier from the same settlement with identical s
 price can still receive the same package, because a prospect has no unique stable identity. Genuinely
 distinct applicants vary; identical ones do not.
 
+### F23/P5: Emergency Job Posting click feel needs a human read
+
+Added 2026-09-19 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P5 of the Playtest
+Correction Pass II run, shipped 2026-09-19. Automated evidence is complete — whole suite **1757 passed
+/ 0 failed / 20 skipped**, exit **0**, log clean, world-pawn delta **0** — and across five fresh worlds
+each, the **Post** click fell from **350–605 ms** to **17–20 ms**. Equipment fulfilment is no longer
+on the click path at all. Restoring the synchronous drain as the negative control put it back at **423
+ms**, so the improvement is real rather than the benchmark measuring nothing. What remains cannot be
+settled by a test.
+
+**Steps.**
+
+1. Post an **Emergency + Elite** job **WITH THE GAME RUNNING**. Judge whether the click returns instantly
+   and whether the responses arrive quickly enough to still feel like an emergency.
+2. Post an **Emergency** job **WHILE THE GAME IS PAUSED**. This is **THE ONE THAT WILL LOOK LIKE A BUG**:
+   the world tick does not advance while paused, so the posting is created and matched immediately, but
+   no applicants appear until you unpause. Judge whether that reads as broken. On unpause, expect up to
+   six applicants within about six world ticks, roughly a tenth of a second at **1x** speed.
+3. Judge whether the brief **searching** state reads as **"working on it"** rather than **"nothing
+   happened"**.
+4. Confirm the same number and quality of applicants still arrive as before — the work was deferred, not
+   reduced. Nothing is faked and no equipment validation was skipped.
+5. Confirm an ordinary non-emergency posting still behaves exactly as it always did.
+
+Also note: cancelling, withdrawing or filling a posting while it is still searching should leave nothing
+behind — no half-arrived applicant, no leftover pawn.
+
 ---
 
 ## Proven in play
