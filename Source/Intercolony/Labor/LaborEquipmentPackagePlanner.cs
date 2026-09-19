@@ -104,8 +104,8 @@ namespace Intercolony
         public int Seed { get; }
 
         /// <summary>
-        /// The zero-based retry stage used for selection. Stage zero is the varied baseline draw;
-        /// later stages are progressively more selective.
+        /// The bounded retry metadata retained for callers that already expose this plan field.
+        /// Candidate selection itself now always uses the seeded deterministic candidate space.
         /// </summary>
         public int RetryAttempt { get; }
 
@@ -129,21 +129,18 @@ namespace Intercolony
     ///
     /// This is intentionally a planning boundary. It never creates Things, touches a Pawn, or
     /// calls LaborEquipmentTierService.Classify. A caller must provide a tier that has already
-    /// passed the settlement capability gate; this class only uses that promised tier to choose
-    /// the item pool and the overlapping package composition.
+    /// passed the settlement capability gate; this class only uses that promised tier to build the
+    /// complete candidate space. The allocator owns the seeded candidate walk and the real
+    /// Classify acceptance test.
     /// </summary>
     public static class LaborEquipmentPackagePlanner
     {
         private const int PlannerSeedSalt = 0x504C_4E52;
+        private const int CandidateOrderSeedSalt = 0x4F52_4452;
 
         private const int MaxApparelItems = 5;
-        private const int FinalRetryAttempt = 3;
         private const int MaxAlternativeApparelAnchors = 8;
 
-        // A score still matters, but the floor makes a plausible lower-scoring item common enough
-        // to prevent weighted sampling from becoming "always choose the best item".
-        private const float MinimumScoreWeight = 0.35f;
-        private const float ScoreWeightRange = 0.65f;
 
         private static readonly IReadOnlyList<LaborEquipmentPackageItemPlan> EmptyApparel =
             new List<LaborEquipmentPackageItemPlan>().AsReadOnly();
@@ -234,9 +231,9 @@ namespace Intercolony
         }
 
         /// <summary>
-        /// Builds one plan using precomputed apparel filters and a bounded retry stage.
-        /// Retry stage zero is the original varied draw. Positive stages only bias selection toward
-        /// stronger, more complete packages; they never change the catalogue or tier authority.
+        /// Builds one plan using the first candidate in the seeded deterministic candidate order.
+        /// Production fulfilment uses PlanDeterministicCandidates so it can instantiate and
+        /// classify each candidate until one passes.
         /// </summary>
         public static LaborEquipmentPackagePlan Plan(
             LaborProspect prospect,
@@ -254,100 +251,23 @@ namespace Intercolony
             }
 
             retryAttempt = NormalizeRetryAttempt(retryAttempt);
-            TechLevel itemTechCeiling = GetItemTechCeiling(
-                sourceSettlement, promisedTier);
-            int seed = SeedFor(
-                prospect, sourceSettlement, promisedTier, clause, marketIdentity);
-
-            if (promisedTier == LaborEquipmentLevel.None)
-            {
-                return new LaborEquipmentPackagePlan(
+            IReadOnlyList<LaborEquipmentPackagePlan> candidates =
+                PlanDeterministicCandidates(
                     prospect,
                     sourceSettlement,
                     promisedTier,
                     clause,
                     marketIdentity,
-                    seed,
-                    retryAttempt,
-                    itemTechCeiling,
-                    weapon: null,
-                    EmptyApparel);
-            }
-
-            if (retryAttempt == FinalRetryAttempt)
-            {
-                IReadOnlyList<LaborEquipmentPackagePlan> deterministicPlans =
-                    BuildDeterministicPlans(
-                        prospect,
-                        sourceSettlement,
-                        promisedTier,
-                        clause,
-                        marketIdentity,
-                        compatibleApparelDefinitions,
-                        body,
-                        retryAttempt,
-                        itemTechCeiling,
-                        seed);
-                return deterministicPlans.Count == 0 ? null : deterministicPlans[0];
-            }
-
-            // Catalogue reads are deterministic. All random work below is scoped so this
-            // planner cannot shift the game's ambient random stream, including on exceptions.
-            Rand.PushState(seed);
-            try
-            {
-                IReadOnlyList<LaborEquipmentCatalogueEntry> apparelPool =
-                    FilterApparelPool(
-                        LaborEquipmentCatalogue.EntriesFor(
-                            LaborEquipmentCatalogueRole.Apparel, itemTechCeiling),
-                        compatibleApparelDefinitions);
-
-                LaborEquipmentCatalogueEntry weapon = null;
-                if (clause != CombatClause.Civilian)
-                {
-                    IReadOnlyList<LaborEquipmentCatalogueEntry> weaponPool =
-                        LaborEquipmentCatalogue.EntriesFor(
-                            LaborEquipmentCatalogueRole.PrimaryWeapon, itemTechCeiling);
-                    weapon = ChooseWeapon(weaponPool, promisedTier, retryAttempt);
-                }
-
-                List<LaborEquipmentCatalogueEntry> apparel = ChooseApparel(
-                    apparelPool, promisedTier, retryAttempt, weapon == null, body);
-                if (!HasRequiredPackageComposition(
-                        promisedTier, clause, weapon, apparel))
-                {
-                    return null;
-                }
-
-                List<LaborEquipmentPackageItemPlan> apparelPlans =
-                    new List<LaborEquipmentPackageItemPlan>(apparel.Count);
-                for (int index = 0; index < apparel.Count; index++)
-                {
-                    apparelPlans.Add(new LaborEquipmentPackageItemPlan(apparel[index]));
-                }
-
-                return new LaborEquipmentPackagePlan(
-                    prospect,
-                    sourceSettlement,
-                    promisedTier,
-                    clause,
-                    marketIdentity,
-                    seed,
-                    retryAttempt,
-                    itemTechCeiling,
-                    weapon == null ? null : new LaborEquipmentPackageItemPlan(weapon),
-                    apparelPlans.AsReadOnly());
-            }
-            finally
-            {
-                Rand.PopState();
-            }
+                    compatibleApparelDefinitions,
+                    body,
+                    retryAttempt);
+            return candidates == null || candidates.Count == 0 ? null : candidates[0];
         }
 
         /// <summary>
-        /// Returns the old allocator's deterministic candidate sequence for the final retry.
+        /// Returns the complete data-only candidate space in a stable, applicant-seeded order.
         /// The allocator owns the Pawn and the authoritative Classify call; this method only
-        /// returns data-only candidates in the same order that the old search tried them.
+        /// returns candidates for the allocator to instantiate and test in order.
         /// </summary>
         internal static IReadOnlyList<LaborEquipmentPackagePlan> PlanDeterministicCandidates(
             LaborProspect prospect,
@@ -387,7 +307,7 @@ namespace Intercolony
                 }.AsReadOnly();
             }
 
-            return BuildDeterministicPlans(
+            IReadOnlyList<LaborEquipmentPackagePlan> plans = BuildDeterministicPlans(
                 prospect,
                 sourceSettlement,
                 promisedTier,
@@ -398,6 +318,31 @@ namespace Intercolony
                 retryAttempt,
                 itemTechCeiling,
                 seed);
+            return RandomizeCandidateOrder(plans, seed);
+        }
+
+        private static IReadOnlyList<LaborEquipmentPackagePlan> RandomizeCandidateOrder(
+            IReadOnlyList<LaborEquipmentPackagePlan> candidates,
+            int seed)
+        {
+            if (candidates == null || candidates.Count < 2)
+            {
+                return candidates;
+            }
+
+            List<LaborEquipmentPackagePlan> ordered =
+                new List<LaborEquipmentPackagePlan>(candidates);
+            int orderSeed = Gen.HashCombineInt(seed, CandidateOrderSeedSalt);
+            for (int index = ordered.Count - 1; index > 0; index--)
+            {
+                int swapSeed = Gen.HashCombineInt(orderSeed, index);
+                int swapIndex = Rand.RangeSeeded(0, index + 1, swapSeed);
+                LaborEquipmentPackagePlan swap = ordered[index];
+                ordered[index] = ordered[swapIndex];
+                ordered[swapIndex] = swap;
+            }
+
+            return ordered.AsReadOnly();
         }
 
         private static IReadOnlyList<LaborEquipmentPackagePlan> BuildDeterministicPlans(
@@ -802,34 +747,6 @@ namespace Intercolony
                 : promisedTechCeiling;
         }
 
-        private static LaborEquipmentCatalogueEntry ChooseWeapon(
-            IReadOnlyList<LaborEquipmentCatalogueEntry> weaponPool,
-            LaborEquipmentLevel promisedTier,
-            int retryAttempt)
-        {
-            if (weaponPool == null || weaponPool.Count == 0)
-            {
-                return null;
-            }
-
-            // Standard packages are allowed to be incomplete. Higher combat tiers normally get
-            // a weapon, while the later authoritative retry remains free to reject the package.
-            if (promisedTier == LaborEquipmentLevel.Standard &&
-                retryAttempt == 0 && Rand.Value < 0.15f)
-            {
-                return null;
-            }
-
-            return PickWeightedEntry(
-                weaponPool,
-                promisedTier,
-                null,
-                null,
-                null,
-                retryAttempt,
-                false);
-        }
-
         private static IReadOnlyList<LaborEquipmentCatalogueEntry> FilterApparelPool(
             IReadOnlyList<LaborEquipmentCatalogueEntry> cataloguePool,
             ISet<ThingDef> compatibleApparelDefinitions)
@@ -1007,7 +924,8 @@ namespace Intercolony
                     FindConflicts(selected, candidate, body);
                 if (conflicts.Count == 0)
                 {
-                    if (selected.Count < MaxApparelItems)
+                    if (selected.Count < MaxApparelItems &&
+                        !WouldLowerSaturatedApparelScore(candidate, selected))
                     {
                         selected.Add(candidate);
                     }
@@ -1020,18 +938,23 @@ namespace Intercolony
                     continue;
                 }
 
-                for (int conflictIndex = selected.Count - 1;
+                List<LaborEquipmentCatalogueEntry> remaining =
+                    new List<LaborEquipmentCatalogueEntry>(selected);
+                for (int conflictIndex = remaining.Count - 1;
                      conflictIndex >= 0;
                      conflictIndex--)
                 {
-                    if (conflicts.Contains(selected[conflictIndex]))
+                    if (conflicts.Contains(remaining[conflictIndex]))
                     {
-                        selected.RemoveAt(conflictIndex);
+                        remaining.RemoveAt(conflictIndex);
                     }
                 }
 
-                if (selected.Count < MaxApparelItems)
+                if (remaining.Count < MaxApparelItems &&
+                    !WouldLowerSaturatedApparelScore(candidate, remaining))
                 {
+                    selected.Clear();
+                    selected.AddRange(remaining);
                     selected.Add(candidate);
                 }
             }
@@ -1197,6 +1120,37 @@ namespace Intercolony
             return choice?.Def?.apparel == null
                 ? 0f
                 : Mathf.Clamp01(choice.StatInputs.Coverage);
+        }
+
+        private static bool WouldLowerSaturatedApparelScore(
+            LaborEquipmentCatalogueEntry candidate,
+            List<LaborEquipmentCatalogueEntry> selected)
+        {
+            if (candidate == null || selected == null || selected.Count == 0)
+            {
+                return false;
+            }
+
+            float totalCoverage = 0f;
+            float totalWeight = 0f;
+            float weightedScore = 0f;
+            for (int index = 0; index < selected.Count; index++)
+            {
+                LaborEquipmentCatalogueEntry choice = selected[index];
+                float coverage = ApparelCoverage(choice);
+                float weight = Math.Max(0.25f, coverage);
+                totalCoverage += coverage;
+                totalWeight += weight;
+                weightedScore += ApparelChoiceScore(choice) * weight;
+            }
+
+            if (totalCoverage < 1f || totalWeight <= 0f)
+            {
+                return false;
+            }
+
+            float currentAverage = weightedScore / totalWeight;
+            return ApparelChoiceScore(candidate) < currentAverage;
         }
 
         private static float ApparelProtectionScore(
@@ -1377,479 +1331,14 @@ namespace Intercolony
                 : CanShareAbstractSlot(left, right);
         }
 
-        private static List<LaborEquipmentCatalogueEntry> ChooseApparel(
-            IReadOnlyList<LaborEquipmentCatalogueEntry> apparelPool,
-            LaborEquipmentLevel promisedTier,
-            int retryAttempt,
-            bool weaponless,
-            BodyDef body)
-        {
-            List<LaborEquipmentCatalogueEntry> selected =
-                new List<LaborEquipmentCatalogueEntry>();
-            if (apparelPool == null || apparelPool.Count == 0)
-            {
-                return selected;
-            }
-
-            int targetCount = ChooseApparelCount(
-                apparelPool, promisedTier, retryAttempt, weaponless);
-            List<ThingDef> selectedDefinitions = new List<ThingDef>();
-            for (int index = 0; index < targetCount; index++)
-            {
-                LaborEquipmentCatalogueEntry choice = PickWeightedEntry(
-                    apparelPool,
-                    promisedTier,
-                    selected,
-                    selectedDefinitions,
-                    body,
-                    retryAttempt,
-                    weaponless);
-                if (choice == null)
-                {
-                    break;
-                }
-
-                selected.Add(choice);
-                selectedDefinitions.Add(choice.Def);
-            }
-
-            return selected;
-        }
-
-        private static int ChooseApparelCount(
-            IReadOnlyList<LaborEquipmentCatalogueEntry> apparelPool,
-            LaborEquipmentLevel promisedTier,
-            int retryAttempt,
-            bool weaponless)
-        {
-            int availableDefinitions = CountDefinitions(apparelPool);
-            int desired;
-            float roll = Rand.Value;
-
-            if (retryAttempt > 0)
-            {
-                if (weaponless)
-                {
-                    // A civilian or otherwise weaponless package has no weapon score to carry the
-                    // promise. Later stages therefore ask for three-to-five pieces immediately,
-                    // then converge on the catalogue's full compatible headroom.
-                    desired = retryAttempt == 1
-                        ? (roll < 0.05f ? 3 : roll < 0.35f ? 4 : MaxApparelItems)
-                        : retryAttempt == 2
-                            ? (roll < 0.02f ? 4 : MaxApparelItems)
-                            : MaxApparelItems;
-                }
-                else
-                {
-                    // Combat packages still retain a little composition variety on the first
-                    // escalation, then use the final stages as a completeness safety net.
-                    desired = retryAttempt == 1
-                        ? (roll < 0.08f ? 2
-                            : roll < 0.32f ? 3
-                            : roll < 0.80f ? 4
-                            : MaxApparelItems)
-                        : retryAttempt == 2
-                            ? (roll < 0.04f ? 3
-                                : roll < 0.22f ? 4
-                                : MaxApparelItems)
-                            : MaxApparelItems;
-                }
-
-                return Math.Min(desired, Math.Min(MaxApparelItems, availableDefinitions));
-            }
-
-            // Retry stage zero intentionally remains the original distribution. It is the common
-            // path and is what keeps ordinary packages varied instead of uniform.
-            switch (promisedTier)
-            {
-                case LaborEquipmentLevel.Standard:
-                    // A Standard worker is deliberately not a full uniform.
-                    desired = roll < 0.18f ? 1 : roll < 0.72f ? 2 : 3;
-                    break;
-                case LaborEquipmentLevel.Professional:
-                    desired = roll < 0.10f ? 1
-                        : roll < 0.38f ? 2
-                        : roll < 0.84f ? 3
-                        : 4;
-                    break;
-                case LaborEquipmentLevel.Elite:
-                    desired = roll < 0.08f ? 1
-                        : roll < 0.28f ? 2
-                        : roll < 0.76f ? 3
-                        : roll < 0.95f ? 4
-                        : MaxApparelItems;
-                    break;
-                default:
-                    desired = 0;
-                    break;
-            }
-
-            return Math.Min(desired, Math.Min(MaxApparelItems, availableDefinitions));
-        }
-
-        private static LaborEquipmentCatalogueEntry PickWeightedEntry(
-            IReadOnlyList<LaborEquipmentCatalogueEntry> pool,
-            LaborEquipmentLevel promisedTier,
-            List<LaborEquipmentCatalogueEntry> selectedApparel,
-            List<ThingDef> selectedDefinitions,
-            BodyDef body,
-            int retryAttempt,
-            bool weaponless)
-        {
-            float totalWeight = 0f;
-            for (int index = 0; index < pool.Count; index++)
-            {
-                LaborEquipmentCatalogueEntry entry = pool[index];
-                if (!CanSelect(
-                        entry, promisedTier, selectedApparel, selectedDefinitions, body))
-                {
-                    continue;
-                }
-
-                totalWeight += WeightFor(
-                    entry, promisedTier, selectedApparel, retryAttempt, weaponless);
-            }
-
-            if (totalWeight <= 0f)
-            {
-                return null;
-            }
-
-            float roll = Rand.Value * totalWeight;
-            float cumulative = 0f;
-            LaborEquipmentCatalogueEntry lastPositive = null;
-            for (int index = 0; index < pool.Count; index++)
-            {
-                LaborEquipmentCatalogueEntry entry = pool[index];
-                if (!CanSelect(
-                        entry, promisedTier, selectedApparel, selectedDefinitions, body))
-                {
-                    continue;
-                }
-
-                float weight = WeightFor(
-                    entry, promisedTier, selectedApparel, retryAttempt, weaponless);
-                if (weight <= 0f)
-                {
-                    continue;
-                }
-
-                lastPositive = entry;
-                cumulative += weight;
-                if (roll < cumulative)
-                {
-                    return entry;
-                }
-            }
-
-            // Keep the choice total safe at the upper floating-point boundary.
-            return lastPositive;
-        }
-
-        private static bool CanSelect(
-            LaborEquipmentCatalogueEntry entry,
-            LaborEquipmentLevel promisedTier,
-            List<LaborEquipmentCatalogueEntry> selectedApparel,
-            List<ThingDef> selectedDefinitions,
-            BodyDef body)
-        {
-            if (entry == null || entry.Def == null ||
-                !BandAllowed(promisedTier, entry.Band))
-            {
-                return false;
-            }
-
-            if (selectedDefinitions == null)
-            {
-                return true;
-            }
-
-            if (selectedDefinitions.Contains(entry.Def))
-            {
-                return false;
-            }
-
-            if (entry.Def.apparel == null)
-            {
-                return false;
-            }
-
-            return CanWearTogetherAsSet(entry.Def, selectedApparel, body);
-        }
-
-        private static bool HasRequiredPackageComposition(
-            LaborEquipmentLevel promisedTier,
-            CombatClause clause,
-            LaborEquipmentCatalogueEntry weapon,
-            List<LaborEquipmentCatalogueEntry> apparel)
-        {
-            int apparelCount = apparel == null ? 0 : apparel.Count;
-            if (clause == CombatClause.Civilian)
-            {
-                return weapon == null && apparelCount > 0;
-            }
-
-            if (promisedTier == LaborEquipmentLevel.Standard)
-            {
-                // The old allocator allowed a Standard weapon-only package or a Standard
-                // apparel-only package, but never an entirely empty package.
-                return weapon != null || apparelCount > 0;
-            }
-
-            // Professional and Elite were only assembled when both candidate pools contributed
-            // an item. Classify remains authoritative for the actual tier floor.
-            return weapon != null && apparelCount > 0;
-        }
-
-        private static bool CanWearTogetherAsSet(
-            ThingDef candidate,
-            List<LaborEquipmentCatalogueEntry> selectedApparel,
-            BodyDef body)
-        {
-            if (candidate?.apparel == null || selectedApparel == null)
-            {
-                return false;
-            }
-
-            for (int index = 0; index < selectedApparel.Count; index++)
-            {
-                LaborEquipmentCatalogueEntry selected = selectedApparel[index];
-                if (selected?.Def?.apparel == null)
-                {
-                    return false;
-                }
-
-                if (body != null)
-                {
-                    // The decompiled RimWorld primitive is pairwise; the old allocator's
-                    // CanWearTogetherAsSet helper applied it to every pair in the set.
-                    if (!ApparelUtility.CanWearTogether(candidate, selected.Def, body))
-                    {
-                        return false;
-                    }
-                }
-                else if (!CanShareAbstractSlot(candidate, selected.Def))
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        private static float WeightFor(
-            LaborEquipmentCatalogueEntry entry,
-            LaborEquipmentLevel promisedTier,
-            List<LaborEquipmentCatalogueEntry> selectedApparel,
-            int retryAttempt,
-            bool weaponless)
-        {
-            float bandWeight = BandWeight(
-                promisedTier,
-                entry.Band,
-                selectedApparel);
-            if (bandWeight <= 0f)
-            {
-                return 0f;
-            }
-
-            // LaborEquipmentItemScore.Score already includes the generic special-purpose
-            // penalty. In particular, disposable/explosive launchers stay in the population but
-            // do not receive a second identity-specific exception here.
-            float score = Mathf.Clamp01(entry.Score);
-            float scoreWeight = MinimumScoreWeight + ScoreWeightRange * score;
-            if (retryAttempt <= 0)
-            {
-                return bandWeight * scoreWeight;
-            }
-
-            return bandWeight * scoreWeight *
-                   BandEscalationMultiplier(entry.Band, retryAttempt, weaponless) *
-                   ScoreEscalationMultiplier(score, retryAttempt, weaponless);
-        }
-
-        private static float BandEscalationMultiplier(
-            LaborEquipmentItemBand band, int retryAttempt, bool weaponless)
-        {
-            float boost;
-            switch (retryAttempt)
-            {
-                case 1:
-                    boost = 0.25f;
-                    break;
-                case 2:
-                    boost = 0.75f;
-                    break;
-                default:
-                    boost = 2.00f;
-                    break;
-            }
-
-            if (weaponless)
-            {
-                boost += retryAttempt == 1 ? 0.40f
-                    : retryAttempt == 2 ? 1.00f
-                    : 2.25f;
-            }
-
-            return 1f + (int)band * boost;
-        }
-
-        private static float ScoreEscalationMultiplier(
-            float score, int retryAttempt, bool weaponless)
-        {
-            int exponent;
-            float floor;
-            switch (retryAttempt)
-            {
-                case 1:
-                    exponent = 2;
-                    floor = 0.45f;
-                    break;
-                case 2:
-                    exponent = 4;
-                    floor = 0.18f;
-                    break;
-                default:
-                    exponent = 6;
-                    floor = 0.04f;
-                    break;
-            }
-
-            if (weaponless)
-            {
-                exponent++;
-                floor = Math.Max(0.02f, floor - 0.08f);
-            }
-
-            float poweredScore = score;
-            for (int power = 1; power < exponent; power++)
-            {
-                poweredScore *= score;
-            }
-
-            return floor + (1f - floor) * poweredScore;
-        }
-
         private static int NormalizeRetryAttempt(int retryAttempt)
         {
             return Math.Max(0, Math.Min(3, retryAttempt));
         }
 
-        private static float BandWeight(
-            LaborEquipmentLevel promisedTier,
-            LaborEquipmentItemBand band,
-            List<LaborEquipmentCatalogueEntry> selectedApparel)
-        {
-            int basicCount = CountBand(selectedApparel, LaborEquipmentItemBand.Basic);
-            int professionalCount = CountBand(
-                selectedApparel, LaborEquipmentItemBand.Professional);
-            int eliteCount = CountBand(selectedApparel, LaborEquipmentItemBand.Elite);
-
-            switch (promisedTier)
-            {
-                case LaborEquipmentLevel.Standard:
-                    if (band == LaborEquipmentItemBand.Basic)
-                    {
-                        return 1f;
-                    }
-
-                    // At most one Professional-ish item is an occasional Standard exception.
-                    return band == LaborEquipmentItemBand.Professional && professionalCount == 0
-                        ? 0.16f
-                        : 0f;
-
-                case LaborEquipmentLevel.Professional:
-                    if (band == LaborEquipmentItemBand.Basic)
-                    {
-                        return 0.48f + (professionalCount > 0 ? 0.22f : 0f);
-                    }
-
-                    if (band == LaborEquipmentItemBand.Professional)
-                    {
-                        return 0.92f + (basicCount > 0 ? 0.24f : 0f);
-                    }
-
-                    // At most one Elite-ish item is an occasional Professional exception.
-                    return eliteCount == 0 ? 0.10f : 0f;
-
-                case LaborEquipmentLevel.Elite:
-                    if (band == LaborEquipmentItemBand.Basic)
-                    {
-                        // A single weaker mundane piece can be filler, not the package identity.
-                        return basicCount == 0 ? 0.05f : 0f;
-                    }
-
-                    if (band == LaborEquipmentItemBand.Professional)
-                    {
-                        return 0.72f + (eliteCount > 0 ? 0.18f : 0f);
-                    }
-
-                    return 0.96f + (professionalCount > 0 ? 0.22f : 0f);
-
-                default:
-                    return 0f;
-            }
-        }
-
-        private static bool BandAllowed(
-            LaborEquipmentLevel promisedTier, LaborEquipmentItemBand band)
-        {
-            switch (promisedTier)
-            {
-                case LaborEquipmentLevel.Standard:
-                    return band == LaborEquipmentItemBand.Basic ||
-                           band == LaborEquipmentItemBand.Professional;
-                case LaborEquipmentLevel.Professional:
-                case LaborEquipmentLevel.Elite:
-                    return band == LaborEquipmentItemBand.Basic ||
-                           band == LaborEquipmentItemBand.Professional ||
-                           band == LaborEquipmentItemBand.Elite;
-                default:
-                    return false;
-            }
-        }
-
-        private static int CountBand(
-            List<LaborEquipmentCatalogueEntry> selected,
-            LaborEquipmentItemBand band)
-        {
-            if (selected == null)
-            {
-                return 0;
-            }
-
-            int count = 0;
-            for (int index = 0; index < selected.Count; index++)
-            {
-                if (selected[index] != null && selected[index].Band == band)
-                {
-                    count++;
-                }
-            }
-
-            return count;
-        }
-
-        private static int CountDefinitions(
-            IReadOnlyList<LaborEquipmentCatalogueEntry> entries)
-        {
-            List<ThingDef> definitions = new List<ThingDef>();
-            for (int index = 0; index < entries.Count; index++)
-            {
-                ThingDef def = entries[index]?.Def;
-                if (def != null && !definitions.Contains(def))
-                {
-                    definitions.Add(def);
-                }
-            }
-
-            return definitions.Count;
-        }
-
         /// <summary>
         /// Conservative slot compatibility for callers that do not provide a BodyDef. Production
-        /// passes the applicant's BodyDef and uses CanWearTogetherAsSet above; this fallback keeps
+        /// passes the applicant's BodyDef and uses the same pairwise check above; this fallback keeps
         /// the public Pawn-free planner safe for data-only callers. Different layers are safe;
         /// same-layer apparel is kept apart when it names a shared body-part group.
         /// </summary>

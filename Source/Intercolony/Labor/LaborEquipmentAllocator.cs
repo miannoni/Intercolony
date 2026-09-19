@@ -10,9 +10,6 @@ namespace Intercolony
     // This allocator fills that narrow gap while leaving LaborEquipmentTierService authoritative.
     internal static class LaborEquipmentAllocator
     {
-        private const int MaxPlanAttempts = 4;
-        private const int RetrySeedSalt = 0x414C_4C52;
-
         internal static bool TryFulfil(
             Pawn pawn, LaborEquipmentLevel promisedTier, CombatClause clause,
             SettlementEconomicProfile profile, out string failReason)
@@ -93,86 +90,47 @@ namespace Intercolony
             string lastFailure = null;
             try
             {
-                // Snapshot all pawn-dependent apparel compatibility once. Every bounded retry
-                // below shares this set; the planner never receives the Pawn or re-runs these
-                // checks while drawing candidates.
+                // Snapshot all pawn-dependent apparel compatibility once. The planner never
+                // receives the Pawn or re-runs these checks while walking candidates.
                 ISet<ThingDef> compatibleApparelDefinitions =
                     BuildCompatibleApparelDefinitions(pawn);
-                for (int attempt = 0; attempt < MaxPlanAttempts; attempt++)
+                IReadOnlyList<LaborEquipmentPackagePlan> deterministicPlans =
+                    LaborEquipmentPackagePlanner.PlanDeterministicCandidates(
+                        prospect,
+                        profile,
+                        promisedTier,
+                        clause,
+                        marketIdentity,
+                        compatibleApparelDefinitions,
+                        body,
+                        retryAttempt: 0);
+                if (deterministicPlans == null || deterministicPlans.Count == 0)
                 {
-                    int attemptMarketIdentity = Gen.HashCombineInt(
-                        marketIdentity, RetrySeedSalt + attempt);
-
-                    if (attempt == MaxPlanAttempts - 1)
+                    lastFailure =
+                        "The deterministic equipment search produced no candidate package.";
+                }
+                else
+                {
+                    // The planner supplies the complete candidate space in a seeded order. Each
+                    // candidate goes through Thing creation and the authoritative Classify check;
+                    // stop at the first package that keeps the promise.
+                    for (int planIndex = 0;
+                         planIndex < deterministicPlans.Count;
+                         planIndex++)
                     {
-                        IReadOnlyList<LaborEquipmentPackagePlan> deterministicPlans =
-                            LaborEquipmentPackagePlanner.PlanDeterministicCandidates(
-                                prospect,
-                                profile,
+                        string deterministicFailure;
+                        if (TryApplyPlannedPackage(
+                                pawn,
+                                deterministicPlans[planIndex],
                                 promisedTier,
                                 clause,
-                                attemptMarketIdentity,
-                                compatibleApparelDefinitions,
-                                body,
-                                attempt);
-                        if (deterministicPlans == null || deterministicPlans.Count == 0)
+                                out deterministicFailure))
                         {
-                            lastFailure =
-                                $"The deterministic equipment search produced no package on " +
-                                $"attempt {attempt + 1} of {MaxPlanAttempts}.";
-                            continue;
+                            return true;
                         }
 
-                        // One final retry contains the old allocator's complete deterministic
-                        // search. Each candidate still goes through Thing creation and the
-                        // authoritative Classify check before the next combination is tried.
-                        for (int planIndex = 0;
-                             planIndex < deterministicPlans.Count;
-                             planIndex++)
-                        {
-                            string deterministicFailure;
-                            if (TryApplyPlannedPackage(
-                                    pawn,
-                                    deterministicPlans[planIndex],
-                                    promisedTier,
-                                    clause,
-                                    out deterministicFailure))
-                            {
-                                return true;
-                            }
-
-                            lastFailure = deterministicFailure;
-                        }
-
-                        continue;
+                        lastFailure = deterministicFailure;
                     }
-
-                    LaborEquipmentPackagePlan plan;
-                    if (!LaborEquipmentPackagePlanner.TryPlan(
-                            prospect,
-                            profile,
-                            promisedTier,
-                            clause,
-                            attemptMarketIdentity,
-                            compatibleApparelDefinitions,
-                            body,
-                            attempt,
-                            out plan) || plan == null)
-                    {
-                        lastFailure =
-                            $"The equipment planner produced no package on attempt " +
-                            $"{attempt + 1} of {MaxPlanAttempts}.";
-                        continue;
-                    }
-
-                    string packageFailure;
-                    if (TryApplyPlannedPackage(
-                            pawn, plan, promisedTier, clause, out packageFailure))
-                    {
-                        return true;
-                    }
-
-                    lastFailure = packageFailure;
                 }
             }
             catch (Exception ex)
@@ -184,10 +142,9 @@ namespace Intercolony
 
             // Preserve the existing failure contract: the caller rejects and disposes the
             // applicant when fulfilment cannot meet the promise. Never return success for the
-            // last under-tier loadout merely because the bounded plan sequence was exhausted.
+            // last under-tier loadout merely because the candidate sequence was exhausted.
             failReason = lastFailure ??
-                $"No planned package could fulfil {promisedTier} after " +
-                $"{MaxPlanAttempts} attempts.";
+                $"No deterministic package could fulfil {promisedTier}.";
             return false;
         }
 
