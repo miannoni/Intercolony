@@ -2361,6 +2361,34 @@ The XML def change is not exercised by a build. The `IntercolonyProduction` cate
 **LOAD** by the suite's clean startup check, but whether the menu reads correctly to a human has not
 been seen.
 
+### F16: the employee-card decision groups need a human read
+
+Added 2026-09-19 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P2 of the Playtest
+Correction Pass II run, shipped 2026-09-19. Automated evidence is complete — whole suite **1739 passed
+/ 0 failed / 19 skipped**, exit **0**, log clean, world-pawn delta **0** — and both of the plan's
+mutation clauses were discharged: wiring **Let them go** to dismissal turned assertion **A3** red, and
+wiring **Not now** to renewal decline turned **A4** and **A5** red. What remains cannot be settled by a
+test.
+
+**Steps.**
+
+1. Take one expanded-card screenshot and judge its readability. The card now shows three groups:
+   **Renew** / **Let them go**, then **Keep them** / **Negotiate** / **Not now**, then **Pay arrears**
+   when it applies. Judge whether those read as three separate decisions rather than one list of six
+   buttons.
+2. Judge whether the header slot reads correctly: **Dismiss** for an active worker, **Cancel** for a
+   travelling one, and a reserved empty slot otherwise. Previously this one slot also showed **Not now**
+   and **Let them go**, so confirm nothing looks missing now that it does not.
+3. Judge whether **Negotiate**, permanently disabled with the tooltip **"Negotiation is not available
+   yet."**, reads as deliberately unavailable rather than broken.
+4. Check different card states and window sizes. Confirm that rows do not overlap and that there are no
+   dead click regions. Assertion **A8** checks that slot rects are disjoint and inside the reported row
+   height, but it cannot judge what the eye sees at an arbitrary window size.
+
+**`Let them go` is a renewal DECLINE**, not a dismissal. The worker serves out the existing term and
+leaves normally. If it reads as an immediate firing to a player, report that as a copy problem even
+though the wiring is correct and proven.
+
 ---
 
 ## Proven in play
