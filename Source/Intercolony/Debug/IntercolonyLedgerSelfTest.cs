@@ -599,7 +599,19 @@ namespace Intercolony
             const string cancelledPurchaseAssertion =
                 "a cancelled purchase is not price evidence";
             const string benchmarkAssertion =
-                "the market benchmark is unavailable rather than invented";
+                "the market benchmark is unavailable rather than invented when both market tiers are empty";
+            const string indicativeBenchmarkAssertion =
+                "B1 an exact product with eligible suppliers gets a non-dash indicative median without a prior RFQ or listing";
+            const string tierPrecedenceAssertion =
+                "B2 current exact listing evidence takes precedence over the indicative median";
+            const string concreteStuffAssertion =
+                "B3 concrete stuff can change the benchmark for the same product";
+            const string anyMaterialAssertion =
+                "B4 a stuffable product left at Any material remains unavailable";
+            const string indicativeDeterminismAssertion =
+                "B5 the indicative median is deterministic within one world refresh";
+            const string indicativePurityAssertion =
+                "B6 estimating the benchmark creates no procurement state or ID";
 
             List<ThingDef> thingDefs = DefDatabase<ThingDef>.AllDefsListForReading;
             List<RecipeDef> recipes = DefDatabase<RecipeDef>.AllDefsListForReading;
@@ -616,6 +628,12 @@ namespace Intercolony
                 r.Skip(purchaseMedianAssertion, reason);
                 r.Skip(cancelledPurchaseAssertion, reason);
                 r.Skip(benchmarkAssertion, reason);
+                r.Skip(indicativeBenchmarkAssertion, reason);
+                r.Skip(tierPrecedenceAssertion, reason);
+                r.Skip(concreteStuffAssertion, reason);
+                r.Skip(anyMaterialAssertion, reason);
+                r.Skip(indicativeDeterminismAssertion, reason);
+                r.Skip(indicativePurityAssertion, reason);
                 return;
             }
 
@@ -1604,72 +1622,48 @@ namespace Intercolony
                         $"; exception {cancelledPurchaseException}"));
             }
 
-            ThingDef benchmarkProduct = null;
-            for (int i = 0; i < thingDefs.Count && benchmarkProduct == null; i++)
+            // B0 deliberately uses a real exact product that the procurement classifier excludes.
+            // With no matching listing or request, tier 1 has no observation and tier 2 has no
+            // eligible supplier path. Any material would be a different guard, so it is not used
+            // to manufacture this both-tiers-empty case.
+            ThingDef bothTiersEmptyProduct = null;
+            if (ThingDefOf.Silver != null &&
+                !ThingDefOf.Silver.MadeFromStuff &&
+                !HasAnyBenchmarkEvidence(state, ThingDefOf.Silver, null) &&
+                !IntercolonyProductClassifier.IsFungibleTradeItem(ThingDefOf.Silver))
             {
-                ThingDef candidate = thingDefs[i];
-                if (candidate == null || candidate.BaseMarketValue <= 0f ||
-                    (candidate.category != ThingCategory.Item &&
-                     candidate.category != ThingCategory.Building))
-                {
-                    continue;
-                }
+                bothTiersEmptyProduct = ThingDefOf.Silver;
+            }
 
-                bool hasMatchingEvidence = false;
-                if (state.SupplierListings != null)
+            if (bothTiersEmptyProduct == null)
+            {
+                for (int i = 0; i < thingDefs.Count && bothTiersEmptyProduct == null; i++)
                 {
-                    foreach (SupplierListing listing in state.SupplierListings)
+                    ThingDef candidate = thingDefs[i];
+                    if (candidate == null || candidate.MadeFromStuff ||
+                        (candidate.category != ThingCategory.Item &&
+                         candidate.category != ThingCategory.Building) ||
+                        IntercolonyProductClassifier.IsFungibleTradeItem(candidate) ||
+                        HasAnyBenchmarkEvidence(state, candidate, null))
                     {
-                        if (listing != null && listing.thingDef == candidate &&
-                            listing.stuffDef == null)
-                        {
-                            hasMatchingEvidence = true;
-                            break;
-                        }
+                        continue;
                     }
-                }
 
-                if (!hasMatchingEvidence && state.Requests != null)
-                {
-                    foreach (PurchaseRequest request in state.Requests)
-                    {
-                        if (request != null && request.thingDef == candidate &&
-                            request.stuffDef == null)
-                        {
-                            hasMatchingEvidence = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!hasMatchingEvidence)
-                {
-                    benchmarkProduct = candidate;
+                    bothTiersEmptyProduct = candidate;
                 }
             }
 
             string benchmarkSearchReason =
-                "searched loaded positive-BaseMarketValue Item or Building ThingDefs with no " +
-                "matching supplier listing or purchase request";
-            if (benchmarkProduct == null)
+                "no exact non-stuff Item or Building was available with both no matching " +
+                "listing/request evidence and no eligible fungible procurement path";
+            if (bothTiersEmptyProduct == null)
             {
                 r.Skip(benchmarkAssertion, benchmarkSearchReason);
             }
             else
             {
-                RecurringContract benchmarkContract = new RecurringContract
-                {
-                    id = -11070,
-                    settlementName = "Self-test benchmark",
-                    factionName = "Self-test faction",
-                    thingDef = benchmarkProduct,
-                    stuffDef = null,
-                    quantityPerCycle = 1,
-                    cadenceTicks = GenDate.TicksPerDay,
-                    totalCycles = 1,
-                    unitPrice = 1f,
-                    status = ContractStatus.Active
-                };
+                RecurringContract benchmarkContract = MakeBenchmarkContract(
+                    bothTiersEmptyProduct, null, -11070);
                 BusinessReportService.ContractEstimate benchmarkEstimate = null;
                 string benchmarkException = null;
                 try
@@ -1682,18 +1676,385 @@ namespace Intercolony
                     benchmarkException = ex.Message;
                 }
 
+                // This is RED if an empty tier-1 result is treated as a price, or if the
+                // unavailable result stops carrying the required zero price.
                 r.Check(
                     benchmarkEstimate != null &&
                     !benchmarkEstimate.hasMarketMedianUnitPrice &&
                     benchmarkEstimate.marketMedianUnitPrice == 0f,
                     benchmarkAssertion,
-                    $"product {benchmarkProduct.defName}; has median " +
+                    $"product {bothTiersEmptyProduct.defName}; has median " +
                     $"{(benchmarkEstimate == null ? "<null>" :
                         benchmarkEstimate.hasMarketMedianUnitPrice.ToString())}; observed " +
                     $"{(benchmarkEstimate == null ? 0f :
                         benchmarkEstimate.marketMedianUnitPrice):0.###}; " +
-                    "matching listing/request search returned none" +
+                    "tier 1 had no matching listing/request and tier 2 had no eligible path" +
                     (benchmarkException == null ? "" : $"; exception {benchmarkException}"));
+            }
+
+            ThingDef indicativeProduct;
+            ThingDef indicativeStuff;
+            int indicativeSupplierSettlementId;
+            string indicativeFixtureReason;
+            bool hasIndicativeFixture = TryFindExactBenchmarkFixture(
+                state,
+                thingDefs,
+                out indicativeProduct,
+                out indicativeStuff,
+                out indicativeSupplierSettlementId,
+                out indicativeFixtureReason);
+
+            if (!hasIndicativeFixture)
+            {
+                r.Skip(indicativeBenchmarkAssertion, indicativeFixtureReason);
+                r.Skip(tierPrecedenceAssertion, indicativeFixtureReason);
+                r.Skip(indicativeDeterminismAssertion, indicativeFixtureReason);
+                r.Skip(indicativePurityAssertion, indicativeFixtureReason);
+            }
+            else
+            {
+                RecurringContract indicativeContract = MakeBenchmarkContract(
+                    indicativeProduct, indicativeStuff, -11071);
+
+                int requestsBefore = state.Requests == null ? -1 : state.Requests.Count;
+                int quotationsBefore = CountBenchmarkQuotations(state.Requests);
+                int pendingResponsesBefore = state.PendingRfqResponses == null
+                    ? -1
+                    : state.PendingRfqResponses.Count;
+                int listingsBefore = state.SupplierListings == null
+                    ? -1
+                    : state.SupplierListings.Count;
+                int recurringContractsBefore = state.Contracts == null
+                    ? -1
+                    : state.Contracts.Count;
+                int procurementContractsBefore = state.ProcurementContracts == null
+                    ? -1
+                    : state.ProcurementContracts.Count;
+                int purchaseOrdersBefore = state.PurchaseOrders == null
+                    ? -1
+                    : state.PurchaseOrders.Count;
+                int reputationsBefore = state.Reputations == null
+                    ? -1
+                    : state.Reputations.Count;
+                string reputationStateBefore = BenchmarkReputationFingerprint(state.Reputations);
+                int marketStatesBefore = state.MarketStates == null
+                    ? -1
+                    : state.MarketStates.Count;
+                int timelineBefore = state.CommercialTimeline == null
+                    ? -1
+                    : state.CommercialTimeline.Count;
+                int supplierConsumptionBefore = state.SupplierOfferConsumptionFor(
+                    state.RefreshCount, indicativeProduct, indicativeSupplierSettlementId);
+                int refreshBefore = state.RefreshCount;
+                int nextIdBefore = state.PeekNextId();
+
+                const int globalRngProbeSeed = 0xB1_06;
+                int expectedRandom;
+                Rand.PushState(globalRngProbeSeed);
+                try
+                {
+                    expectedRandom = Rand.Int;
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
+
+                BusinessReportService.ContractEstimate purityEstimate = null;
+                int actualRandom = int.MinValue;
+                string purityException = null;
+                Rand.PushState(globalRngProbeSeed);
+                try
+                {
+                    // B6 is RED if Estimate creates a request/quotation/listing/contract or
+                    // purchase order, mutates market state/timeline, uses an ID, mutates supplier
+                    // consumption/reputation/refresh state, or consumes the global RNG stream.
+                    purityEstimate = BusinessReportService.Estimate(
+                        state, indicativeContract);
+                    actualRandom = Rand.Int;
+                }
+                catch (System.Exception ex)
+                {
+                    purityException = ex.Message;
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
+
+                int requestsAfter = state.Requests == null ? -1 : state.Requests.Count;
+                int quotationsAfter = CountBenchmarkQuotations(state.Requests);
+                int pendingResponsesAfter = state.PendingRfqResponses == null
+                    ? -1
+                    : state.PendingRfqResponses.Count;
+                int listingsAfter = state.SupplierListings == null
+                    ? -1
+                    : state.SupplierListings.Count;
+                int recurringContractsAfter = state.Contracts == null
+                    ? -1
+                    : state.Contracts.Count;
+                int procurementContractsAfter = state.ProcurementContracts == null
+                    ? -1
+                    : state.ProcurementContracts.Count;
+                int purchaseOrdersAfter = state.PurchaseOrders == null
+                    ? -1
+                    : state.PurchaseOrders.Count;
+                int reputationsAfter = state.Reputations == null
+                    ? -1
+                    : state.Reputations.Count;
+                string reputationStateAfter = BenchmarkReputationFingerprint(state.Reputations);
+                int marketStatesAfter = state.MarketStates == null
+                    ? -1
+                    : state.MarketStates.Count;
+                int timelineAfter = state.CommercialTimeline == null
+                    ? -1
+                    : state.CommercialTimeline.Count;
+                int supplierConsumptionAfter = state.SupplierOfferConsumptionFor(
+                    state.RefreshCount, indicativeProduct, indicativeSupplierSettlementId);
+
+                r.Check(
+                    purityEstimate != null &&
+                    purityEstimate.hasMarketMedianUnitPrice &&
+                    purityEstimate.marketMedianUnitPrice > 0f &&
+                    requestsBefore == requestsAfter &&
+                    quotationsBefore == quotationsAfter &&
+                    pendingResponsesBefore == pendingResponsesAfter &&
+                    listingsBefore == listingsAfter &&
+                    recurringContractsBefore == recurringContractsAfter &&
+                    procurementContractsBefore == procurementContractsAfter &&
+                    purchaseOrdersBefore == purchaseOrdersAfter &&
+                    reputationsBefore == reputationsAfter &&
+                    reputationStateBefore == reputationStateAfter &&
+                    marketStatesBefore == marketStatesAfter &&
+                    timelineBefore == timelineAfter &&
+                    supplierConsumptionBefore == supplierConsumptionAfter &&
+                    refreshBefore == state.RefreshCount &&
+                    nextIdBefore == state.PeekNextId() &&
+                    expectedRandom == actualRandom,
+                    indicativePurityAssertion,
+                    $"requests {requestsBefore}->{requestsAfter}; quotations " +
+                    $"{quotationsBefore}->{quotationsAfter}; pending " +
+                    $"{pendingResponsesBefore}->{pendingResponsesAfter}; listings " +
+                    $"{listingsBefore}->{listingsAfter}; recurring contracts " +
+                    $"{recurringContractsBefore}->{recurringContractsAfter}; procurement " +
+                    $"contracts {procurementContractsBefore}->{procurementContractsAfter}; " +
+                    $"orders {purchaseOrdersBefore}->{purchaseOrdersAfter}; reputations " +
+                    $"{reputationsBefore}->{reputationsAfter}; supplier consumption " +
+                    $"{supplierConsumptionBefore}->{supplierConsumptionAfter}; refresh " +
+                    $"{refreshBefore}->{state.RefreshCount}; next id " +
+                    $"{nextIdBefore}->{state.PeekNextId()}; RNG {expectedRandom}->{actualRandom}" +
+                    (purityException == null ? "" : $"; exception {purityException}"));
+
+                BusinessReportService.ContractEstimate indicativeEstimate = null;
+                string indicativeException = null;
+                try
+                {
+                    // Every benchmark acceptance observes the real Business report path.
+                    indicativeEstimate = BusinessReportService.Estimate(
+                        state, indicativeContract);
+                }
+                catch (System.Exception ex)
+                {
+                    indicativeException = ex.Message;
+                }
+
+                // B1 is RED if Estimate stops falling through to the read-only indicative tier
+                // or requires a player-created RFQ/listing before showing an exact price.
+                r.Check(
+                    indicativeEstimate != null &&
+                    indicativeEstimate.hasMarketMedianUnitPrice &&
+                    indicativeEstimate.marketMedianUnitPrice > 0f,
+                    indicativeBenchmarkAssertion,
+                    $"product {indicativeProduct.defName}; stuff " +
+                    $"{(indicativeStuff == null ? "<none>" : indicativeStuff.defName)}; " +
+                    $"observed {(indicativeEstimate == null ? 0f :
+                        indicativeEstimate.marketMedianUnitPrice):0.###}; " +
+                    "no matching listing/request was present before Estimate" +
+                    (indicativeException == null ? "" : $"; exception {indicativeException}"));
+
+                if (state.SupplierListings == null || indicativeSupplierSettlementId < 0)
+                {
+                    r.Skip(
+                        tierPrecedenceAssertion,
+                        "the exact indicative fixture had no accessible settlement for a current listing");
+                }
+                else
+                {
+                    const float exactListingPrice = 12345.5f;
+                    SupplierListing exactListing = new SupplierListing
+                    {
+                        id = -11072,
+                        settlementId = indicativeSupplierSettlementId,
+                        thingDef = indicativeProduct,
+                        stuffDef = indicativeStuff,
+                        quality = null,
+                        quantityAvailable = 1,
+                        unitPrice = exactListingPrice,
+                        createdTick = GenTicks.TicksGame,
+                        expiryTick = SupplierListing.NoExpiryTick,
+                        refreshWindow = state.RefreshCount
+                    };
+                    List<SupplierListing> savedListings =
+                        new List<SupplierListing>(state.SupplierListings);
+                    BusinessReportService.ContractEstimate listingEstimate = null;
+                    string listingException = null;
+                    try
+                    {
+                        state.SupplierListings.Add(exactListing);
+                        // B2 is RED if tier 1 and tier 2 are blended or if the resolver order is
+                        // swapped so the indicative value wins over this exact current listing.
+                        listingEstimate = BusinessReportService.Estimate(
+                            state, indicativeContract);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        listingException = ex.Message;
+                    }
+                    finally
+                    {
+                        state.SupplierListings.Clear();
+                        state.SupplierListings.AddRange(savedListings);
+                    }
+
+                    r.Check(
+                        listingEstimate != null &&
+                        listingEstimate.hasMarketMedianUnitPrice &&
+                        Mathf.Approximately(
+                            listingEstimate.marketMedianUnitPrice, exactListingPrice),
+                        tierPrecedenceAssertion,
+                        $"product {indicativeProduct.defName}; stuff " +
+                        $"{(indicativeStuff == null ? "<none>" : indicativeStuff.defName)}; " +
+                        $"listing {exactListingPrice:0.###}; observed " +
+                        $"{(listingEstimate == null ? 0f :
+                            listingEstimate.marketMedianUnitPrice):0.###}" +
+                        (listingException == null ? "" : $"; exception {listingException}"));
+                }
+
+                int refreshBeforeDeterminism = state.RefreshCount;
+                BusinessReportService.ContractEstimate firstIndicativeEstimate = null;
+                BusinessReportService.ContractEstimate secondIndicativeEstimate = null;
+                string determinismException = null;
+                try
+                {
+                    // B5 is RED if the same world/refresh re-rolls or returns a different cached
+                    // answer; these adjacent calls deliberately do not advance RefreshCount.
+                    firstIndicativeEstimate = BusinessReportService.Estimate(
+                        state, indicativeContract);
+                    secondIndicativeEstimate = BusinessReportService.Estimate(
+                        state, indicativeContract);
+                }
+                catch (System.Exception ex)
+                {
+                    determinismException = ex.Message;
+                }
+
+                r.Check(
+                    firstIndicativeEstimate != null &&
+                    secondIndicativeEstimate != null &&
+                    firstIndicativeEstimate.hasMarketMedianUnitPrice &&
+                    secondIndicativeEstimate.hasMarketMedianUnitPrice &&
+                    firstIndicativeEstimate.marketMedianUnitPrice > 0f &&
+                    Mathf.Approximately(
+                        firstIndicativeEstimate.marketMedianUnitPrice,
+                        secondIndicativeEstimate.marketMedianUnitPrice) &&
+                    refreshBeforeDeterminism == state.RefreshCount,
+                    indicativeDeterminismAssertion,
+                    $"product {indicativeProduct.defName}; refresh " +
+                    $"{refreshBeforeDeterminism}->{state.RefreshCount}; first " +
+                    $"{(firstIndicativeEstimate == null ? 0f :
+                        firstIndicativeEstimate.marketMedianUnitPrice):0.###}; second " +
+                    $"{(secondIndicativeEstimate == null ? 0f :
+                        secondIndicativeEstimate.marketMedianUnitPrice):0.###}" +
+                    (determinismException == null ? "" : $"; exception {determinismException}"));
+
+            }
+
+            ThingDef stuffBenchmarkProduct;
+            ThingDef firstBenchmarkStuff;
+            ThingDef secondBenchmarkStuff;
+            string stuffFixtureReason;
+            bool hasStuffFixture = TryFindStuffBenchmarkFixture(
+                state,
+                thingDefs,
+                out stuffBenchmarkProduct,
+                out firstBenchmarkStuff,
+                out secondBenchmarkStuff,
+                out stuffFixtureReason);
+            if (!hasStuffFixture)
+            {
+                r.Skip(concreteStuffAssertion, stuffFixtureReason);
+                r.Skip(anyMaterialAssertion, stuffFixtureReason);
+            }
+            else
+            {
+                RecurringContract firstStuffContract = MakeBenchmarkContract(
+                    stuffBenchmarkProduct, firstBenchmarkStuff, -11073);
+                RecurringContract secondStuffContract = MakeBenchmarkContract(
+                    stuffBenchmarkProduct, secondBenchmarkStuff, -11074);
+                BusinessReportService.ContractEstimate firstStuffEstimate = null;
+                BusinessReportService.ContractEstimate secondStuffEstimate = null;
+                string stuffException = null;
+                try
+                {
+                    // B3 is RED if the indicative key or quote path drops concrete stuff and
+                    // therefore reports one blended benchmark for both materials.
+                    firstStuffEstimate = BusinessReportService.Estimate(
+                        state, firstStuffContract);
+                    secondStuffEstimate = BusinessReportService.Estimate(
+                        state, secondStuffContract);
+                }
+                catch (System.Exception ex)
+                {
+                    stuffException = ex.Message;
+                }
+
+                r.Check(
+                    firstStuffEstimate != null &&
+                    secondStuffEstimate != null &&
+                    firstStuffEstimate.hasMarketMedianUnitPrice &&
+                    secondStuffEstimate.hasMarketMedianUnitPrice &&
+                    firstStuffEstimate.marketMedianUnitPrice > 0f &&
+                    secondStuffEstimate.marketMedianUnitPrice > 0f &&
+                    !Mathf.Approximately(
+                        firstStuffEstimate.marketMedianUnitPrice,
+                        secondStuffEstimate.marketMedianUnitPrice),
+                    concreteStuffAssertion,
+                    $"product {stuffBenchmarkProduct.defName}; " +
+                    $"{firstBenchmarkStuff.defName} " +
+                    $"{(firstStuffEstimate == null ? 0f :
+                        firstStuffEstimate.marketMedianUnitPrice):0.###}; " +
+                    $"{secondBenchmarkStuff.defName} " +
+                    $"{(secondStuffEstimate == null ? 0f :
+                        secondStuffEstimate.marketMedianUnitPrice):0.###}" +
+                    (stuffException == null ? "" : $"; exception {stuffException}"));
+
+                RecurringContract anyMaterialContract = MakeBenchmarkContract(
+                    stuffBenchmarkProduct, null, -11075);
+                BusinessReportService.ContractEstimate anyMaterialEstimate = null;
+                string anyMaterialException = null;
+                try
+                {
+                    // B4 is RED if a stuffable product with Any material falls through to a
+                    // default or blended stuff instead of remaining honestly unresolved.
+                    anyMaterialEstimate = BusinessReportService.Estimate(
+                        state, anyMaterialContract);
+                }
+                catch (System.Exception ex)
+                {
+                    anyMaterialException = ex.Message;
+                }
+
+                r.Check(
+                    anyMaterialEstimate != null &&
+                    !anyMaterialEstimate.hasMarketMedianUnitPrice &&
+                    anyMaterialEstimate.marketMedianUnitPrice == 0f,
+                    anyMaterialAssertion,
+                    $"product {stuffBenchmarkProduct.defName}; Any material; has median " +
+                    $"{(anyMaterialEstimate == null ? "<null>" :
+                        anyMaterialEstimate.hasMarketMedianUnitPrice.ToString())}; observed " +
+                    $"{(anyMaterialEstimate == null ? 0f :
+                        anyMaterialEstimate.marketMedianUnitPrice):0.###}" +
+                    (anyMaterialException == null ? "" : $"; exception {anyMaterialException}"));
             }
         }
 
@@ -2327,6 +2688,401 @@ namespace Intercolony
                     $"{employments.Count} employment(s), {contracts.Count} agreement(s), and " +
                     $"the map pawn's Construction priority {savedConstructionPriority}.");
             }
+        }
+
+        private static RecurringContract MakeBenchmarkContract(
+            ThingDef product, ThingDef stuff, int id)
+        {
+            return new RecurringContract
+            {
+                id = id,
+                settlementName = "Self-test benchmark",
+                factionName = "Self-test faction",
+                thingDef = product,
+                stuffDef = stuff,
+                quantityPerCycle = 1,
+                cadenceTicks = GenDate.TicksPerDay,
+                totalCycles = 1,
+                unitPrice = 1f,
+                status = ContractStatus.Active
+            };
+        }
+
+        private static bool HasAnyBenchmarkEvidence(
+            IntercolonyWorldComponent state, ThingDef product, ThingDef stuff)
+        {
+            if (state == null || product == null)
+            {
+                return false;
+            }
+
+            if (state.SupplierListings != null)
+            {
+                foreach (SupplierListing listing in state.SupplierListings)
+                {
+                    if (listing != null && listing.thingDef == product && listing.stuffDef == stuff)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            if (state.Requests != null)
+            {
+                foreach (PurchaseRequest request in state.Requests)
+                {
+                    if (request != null && request.thingDef == product && request.stuffDef == stuff)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static List<ThingDef> OrderedBenchmarkCandidates(
+            List<ThingDef> thingDefs, ThingDef preferred)
+        {
+            List<ThingDef> candidates = new List<ThingDef>();
+            if (preferred != null && (thingDefs == null || thingDefs.Contains(preferred)))
+            {
+                candidates.Add(preferred);
+            }
+
+            if (thingDefs != null)
+            {
+                foreach (ThingDef candidate in thingDefs)
+                {
+                    if (candidate != null && !candidates.Contains(candidate))
+                    {
+                        candidates.Add(candidate);
+                    }
+                }
+            }
+
+            return candidates;
+        }
+
+        private static bool TryFindExactBenchmarkFixture(
+            IntercolonyWorldComponent state,
+            List<ThingDef> thingDefs,
+            out ThingDef product,
+            out ThingDef stuff,
+            out int supplierSettlementId,
+            out string reason)
+        {
+            product = null;
+            stuff = null;
+            supplierSettlementId = -1;
+            reason = null;
+            string lastEligibilityReason = null;
+
+            List<ThingDef> candidates = OrderedBenchmarkCandidates(thingDefs, ThingDefOf.TextBook);
+
+            // Prefer a naturally exact, stuffless product such as TextBook. This keeps B1
+            // independent of any material ambiguity while still requiring a real eligible
+            // supplier through the authoritative read-only quote seam.
+            foreach (ThingDef candidate in candidates)
+            {
+                if (candidate == null || candidate.MadeFromStuff ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out _) ||
+                    HasAnyBenchmarkEvidence(state, candidate, null))
+                {
+                    continue;
+                }
+
+                int candidateSettlementId;
+                if (TryFindEligibleIndicativeSupplier(
+                        state, candidate, null, out candidateSettlementId, out lastEligibilityReason))
+                {
+                    product = candidate;
+                    supplierSettlementId = candidateSettlementId;
+                    return true;
+                }
+            }
+
+            // If this install has no exact stuffless product with an eligible supplier, use a
+            // concrete material as the exact specification. It is still required to have no
+            // recorded listing or RFQ before the Estimate call.
+            foreach (ThingDef candidate in candidates)
+            {
+                if (candidate == null || !candidate.MadeFromStuff ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out _))
+                {
+                    continue;
+                }
+
+                List<ThingDef> allowedStuffs;
+                try
+                {
+                    allowedStuffs = new List<ThingDef>(GenStuff.AllowedStuffsFor(candidate));
+                }
+                catch (System.Exception ex)
+                {
+                    lastEligibilityReason = $"allowed-stuff lookup threw {ex.GetType().Name}";
+                    continue;
+                }
+
+                allowedStuffs.Sort((left, right) => string.CompareOrdinal(
+                    left?.defName ?? string.Empty, right?.defName ?? string.Empty));
+                foreach (ThingDef candidateStuff in allowedStuffs)
+                {
+                    if (candidateStuff == null || !candidateStuff.IsStuff ||
+                        HasAnyBenchmarkEvidence(state, candidate, candidateStuff))
+                    {
+                        continue;
+                    }
+
+                    int candidateSettlementId;
+                    if (TryFindEligibleIndicativeSupplier(
+                            state,
+                            candidate,
+                            candidateStuff,
+                            out candidateSettlementId,
+                            out lastEligibilityReason))
+                    {
+                        product = candidate;
+                        stuff = candidateStuff;
+                        supplierSettlementId = candidateSettlementId;
+                        return true;
+                    }
+                }
+            }
+
+            reason =
+                "no loaded exact product had no prior matching listing/request and an eligible " +
+                "read-only supplier quote" +
+                (lastEligibilityReason == null ? "" : $" ({lastEligibilityReason})");
+            return false;
+        }
+
+        private static bool TryFindStuffBenchmarkFixture(
+            IntercolonyWorldComponent state,
+            List<ThingDef> thingDefs,
+            out ThingDef product,
+            out ThingDef firstStuff,
+            out ThingDef secondStuff,
+            out string reason)
+        {
+            product = null;
+            firstStuff = null;
+            secondStuff = null;
+            reason = null;
+            string lastEligibilityReason = null;
+
+            List<ThingDef> candidates = OrderedBenchmarkCandidates(
+                thingDefs, ThingDefOf.DiningChair);
+            foreach (ThingDef candidate in candidates)
+            {
+                if (candidate == null || !candidate.MadeFromStuff ||
+                    !IntercolonyProductClassifier.TryGetTradableCategory(
+                        candidate, out _))
+                {
+                    continue;
+                }
+
+                List<ThingDef> allowedStuffs;
+                try
+                {
+                    allowedStuffs = new List<ThingDef>(GenStuff.AllowedStuffsFor(candidate));
+                }
+                catch (System.Exception ex)
+                {
+                    lastEligibilityReason = $"allowed-stuff lookup threw {ex.GetType().Name}";
+                    continue;
+                }
+
+                allowedStuffs.Sort((left, right) => string.CompareOrdinal(
+                    left?.defName ?? string.Empty, right?.defName ?? string.Empty));
+                for (int leftIndex = 0; leftIndex < allowedStuffs.Count; leftIndex++)
+                {
+                    ThingDef leftStuff = allowedStuffs[leftIndex];
+                    if (leftStuff == null || !leftStuff.IsStuff ||
+                        HasAnyBenchmarkEvidence(state, candidate, leftStuff))
+                    {
+                        continue;
+                    }
+
+                    if (!TryFindEligibleIndicativeSupplier(
+                            state,
+                            candidate,
+                            leftStuff,
+                            out _,
+                            out lastEligibilityReason))
+                    {
+                        continue;
+                    }
+
+                    for (int rightIndex = leftIndex + 1;
+                         rightIndex < allowedStuffs.Count;
+                         rightIndex++)
+                    {
+                        ThingDef rightStuff = allowedStuffs[rightIndex];
+                        if (rightStuff == null || !rightStuff.IsStuff ||
+                            HasAnyBenchmarkEvidence(state, candidate, rightStuff))
+                        {
+                            continue;
+                        }
+
+                        if (!TryFindEligibleIndicativeSupplier(
+                                state,
+                                candidate,
+                                rightStuff,
+                                out _,
+                                out lastEligibilityReason))
+                        {
+                            continue;
+                        }
+
+                        // Do not compare Estimate results while selecting this fixture. B3 must
+                        // fail, rather than skip, if production accidentally drops the stuff key.
+                        product = candidate;
+                        firstStuff = leftStuff;
+                        secondStuff = rightStuff;
+                        return true;
+                    }
+                }
+            }
+
+            reason =
+                "no stuffable product had two allowed concrete stuffs with no matching " +
+                "listing/request and an eligible read-only supplier quote" +
+                (lastEligibilityReason == null ? "" : $" ({lastEligibilityReason})");
+            return false;
+        }
+
+        private static bool TryFindEligibleIndicativeSupplier(
+            IntercolonyWorldComponent state,
+            ThingDef product,
+            ThingDef stuff,
+            out int settlementId,
+            out string reason)
+        {
+            settlementId = -1;
+            reason = null;
+            if (state == null || product == null)
+            {
+                reason = "the world state or exact product was unavailable";
+                return false;
+            }
+
+            IntercolonyProductCategory category;
+            if (!IntercolonyProductClassifier.TryGetTradableCategory(
+                    product, out category))
+            {
+                reason = $"{product.defName} is not a fungible procurement product";
+                return false;
+            }
+
+            if (Find.WorldObjects == null || Find.WorldObjects.Settlements == null)
+            {
+                reason = "the world settlement collection was unavailable";
+                return false;
+            }
+
+            bool sawAccessibleSettlement = false;
+            foreach (var settlement in Find.WorldObjects.Settlements)
+            {
+                if (settlement == null || !IntercolonyMarketAccess.IsAccessible(settlement))
+                {
+                    continue;
+                }
+
+                sawAccessibleSettlement = true;
+                SettlementEconomicProfile profile = state.GetProfileForReadOnly(settlement);
+                if (profile == null ||
+                    (product.techLevel != TechLevel.Undefined &&
+                     product.techLevel > profile.techTier))
+                {
+                    continue;
+                }
+
+                // This is only fixture eligibility: it exercises the authoritative pure quote
+                // seam, not the Business resolver being asserted below. The explicit seed keeps
+                // this probe read-only and avoids relying on a random global draw.
+                if (RfqService.TryCalculateOneSupplierUnitPrice(
+                        state,
+                        settlement,
+                        profile,
+                        product,
+                        stuff,
+                        null,
+                        category,
+                        FulfillmentMode.SellerDelivery,
+                        RfqService.MinimumEffectiveSupplyForSupplierQuote,
+                        1,
+                        out float supplierUnitPrice) &&
+                    supplierUnitPrice > 0f &&
+                    !float.IsNaN(supplierUnitPrice) &&
+                    !float.IsInfinity(supplierUnitPrice))
+                {
+                    settlementId = settlement.ID;
+                    return true;
+                }
+            }
+
+            reason = sawAccessibleSettlement
+                ? "no accessible settlement passed the pure supplier quote eligibility seam"
+                : "no accessible settlement was available";
+            return false;
+        }
+
+        private static int CountBenchmarkQuotations(List<PurchaseRequest> requests)
+        {
+            if (requests == null)
+            {
+                return -1;
+            }
+
+            int count = 0;
+            foreach (PurchaseRequest request in requests)
+            {
+                if (request?.quotes != null)
+                {
+                    count += request.quotes.Count;
+                }
+            }
+
+            return count;
+        }
+
+        private static string BenchmarkReputationFingerprint(
+            Dictionary<int, CommercialReputation> reputations)
+        {
+            if (reputations == null)
+            {
+                return "<null>";
+            }
+
+            List<int> settlementIds = new List<int>(reputations.Keys);
+            settlementIds.Sort();
+            StringBuilder fingerprint = new StringBuilder();
+            foreach (int settlementId in settlementIds)
+            {
+                reputations.TryGetValue(settlementId, out CommercialReputation reputation);
+                fingerprint.Append(settlementId).Append(':');
+                if (reputation == null)
+                {
+                    fingerprint.Append("<null>;");
+                    continue;
+                }
+
+                fingerprint.Append(reputation.settlementName ?? "<null>").Append('|')
+                    .Append(reputation.factionName ?? "<null>").Append('|')
+                    .Append(reputation.Score).Append('|')
+                    .Append(reputation.lastRecordedTier).Append('|')
+                    .Append(reputation.ordersCompleted).Append('|')
+                    .Append(reputation.ordersLate).Append('|')
+                    .Append(reputation.ordersFailed).Append('|')
+                    .Append(reputation.ordersCancelled).Append('|')
+                    .Append(reputation.purchasesCompleted).Append('|')
+                    .Append(reputation.purchaseCancellations).Append(';');
+            }
+
+            return fingerprint.ToString();
         }
 
         private static void MoveRecipeToFront(List<RecipeDef> recipes, RecipeDef target)
