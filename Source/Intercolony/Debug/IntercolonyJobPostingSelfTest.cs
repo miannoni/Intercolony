@@ -174,6 +174,14 @@ namespace Intercolony
         private const string EmergencyArrivalLetterLabel = "Emergency reinforcements inbound";
         private const string OrdinaryArrivalLabel =
             "ordinary hire keeps conventional travelDays arrival";
+        private const string EmergencyApplicantMigrationQuoteLabel =
+            "S4/C2: schema 59 emergency applicant receives a frozen emergency quote";
+        private const string EmergencyApplicantMigrationInvalidationLabel =
+            "S4/C3: schema 59 emergency applicant with a missing settlement is discarded";
+        private const string EmergencyApplicantMigrationOrdinaryLabel =
+            "S4/C1: ordinary applicant is untouched by emergency migration";
+        private const string EmergencyApplicantMigrationIdentityLabel =
+            "S4/C4: legacy applicant receives a census identity or safe marker";
 
         public static string Run(IntercolonyWorldComponent state, Map map)
         {
@@ -216,6 +224,7 @@ namespace Intercolony
                 CheckLifecycle(r, state);
                 CheckApplicantOwnAsk(r, state, map);
                 CheckFrozenEmergencyArrivalOnHire(r, state, map);
+                CheckEmergencyApplicantMigration(r, state);
                 CheckLoadPruner(r, state);
             }
             catch (System.Exception ex)
@@ -3798,6 +3807,449 @@ namespace Intercolony
                     dropPodArrivalLettersSent.UnionWith(savedDropPodArrivalLettersSent);
                 }
             }
+        }
+
+        private static void CheckEmergencyApplicantMigration(
+            Results r, IntercolonyWorldComponent state)
+        {
+            const int preMigrationVersion = 59;
+            const int termDays = 20;
+            const int emergencyTravelDays = 3;
+            const int ordinaryTravelDays = 7;
+
+            FieldInfo saveVersionField = typeof(IntercolonyWorldComponent).GetField(
+                "saveVersion", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo censusField = typeof(LaborCandidateService).GetField(
+                "census", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo censusRefreshField = typeof(LaborCandidateService).GetField(
+                "censusRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo poolField = typeof(LaborCandidateService).GetField(
+                "pool", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo poolRefreshField = typeof(LaborCandidateService).GetField(
+                "poolRefreshCount", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo poolOwnerField = typeof(LaborCandidateService).GetField(
+                "poolOwner", BindingFlags.Static | BindingFlags.NonPublic);
+            FieldInfo economySeedField = typeof(IntercolonyWorldComponent).GetField(
+                "economySeed", BindingFlags.Instance | BindingFlags.NonPublic);
+            FieldInfo profileCacheField = typeof(IntercolonyWorldComponent).GetField(
+                "profileCache", BindingFlags.Instance | BindingFlags.NonPublic);
+
+            if (saveVersionField == null || censusField == null ||
+                censusRefreshField == null || poolField == null ||
+                poolRefreshField == null || poolOwnerField == null ||
+                economySeedField == null || profileCacheField == null)
+            {
+                SkipEmergencyApplicantMigrationAssertions(
+                    r,
+                    saveVersionField == null
+                        ? "the private saveVersion field was unavailable"
+                        : "the labor migration or profile cache fields were unavailable");
+                return;
+            }
+
+            if (Find.WorldPawns == null)
+            {
+                SkipEmergencyApplicantMigrationAssertions(
+                    r,
+                    "Find.WorldPawns was null, so the direct applicant pawns could not be " +
+                    "disposed through the existing helper");
+                return;
+            }
+
+            List<JobPosting> savedPostings = new List<JobPosting>(state.Postings);
+            List<LaborProspect> savedCensus =
+                censusField.GetValue(null) as List<LaborProspect>;
+            List<LaborProspect> savedCensusContents = savedCensus == null
+                ? null
+                : new List<LaborProspect>(savedCensus);
+            int savedCensusRefreshCount = (int)censusRefreshField.GetValue(null);
+            List<LaborCandidate> savedPool =
+                poolField.GetValue(null) as List<LaborCandidate>;
+            List<LaborCandidate> savedPoolContents = savedPool == null
+                ? null
+                : new List<LaborCandidate>(savedPool);
+            int savedPoolRefreshCount = (int)poolRefreshField.GetValue(null);
+            IntercolonyWorldComponent savedPoolOwner =
+                poolOwnerField.GetValue(null) as IntercolonyWorldComponent;
+            int savedSaveVersion = state.SaveVersion;
+            int savedEconomySeed = (int)economySeedField.GetValue(state);
+            Dictionary<int, SettlementEconomicProfile> savedProfileCache =
+                profileCacheField.GetValue(state) as Dictionary<int, SettlementEconomicProfile>;
+            Dictionary<int, SettlementEconomicProfile> savedProfileCacheContents =
+                savedProfileCache == null
+                    ? null
+                    : new Dictionary<int, SettlementEconomicProfile>(savedProfileCache);
+            SettlementEconomicProfile controlledProfile = null;
+            SettlementRapidLogisticsCapability savedControlledCapability =
+                SettlementRapidLogisticsCapability.ConventionalTransportOnly;
+            bool controlledCapabilityChanged = false;
+
+            JobPosting emergencyPosting = null;
+            JobPosting ordinaryPosting = null;
+            JobApplicant migratedApplicant = null;
+            JobApplicant invalidApplicant = null;
+            JobApplicant ordinaryApplicant = null;
+            Pawn migratedPawn = null;
+            Pawn invalidPawn = null;
+            Pawn ordinaryPawn = null;
+
+            try
+            {
+                // This is only a source of a registered faction and a materialisable pawn. The
+                // emergency distance below is controlled directly; no live emergency-eligible
+                // prospect is requested or filtered for this fixture.
+                List<LaborProspect> census = LaborCandidateService.Census(state);
+                LaborProspect sourceProspect = null;
+                if (census != null)
+                {
+                    foreach (LaborProspect prospect in census)
+                    {
+                        if (prospect == null || prospect.faction == null ||
+                            prospect.settlementId < 0 ||
+                            Find.FactionManager?.AllFactionsListForReading?.Contains(
+                                prospect.faction) != true)
+                        {
+                            continue;
+                        }
+
+                        Settlement sourceSettlement = IntercolonyMarketAccess.FindSettlement(
+                            prospect.settlementId);
+                        if (sourceSettlement == null ||
+                            !IntercolonyMarketAccess.IsAccessible(sourceSettlement, out _) ||
+                            !EmployerReputationService.WillSupplyLabor(
+                                state, sourceSettlement.ID, out _))
+                        {
+                            continue;
+                        }
+
+                        sourceProspect = prospect;
+                        break;
+                    }
+                }
+
+                if (sourceProspect == null)
+                {
+                    SkipEmergencyApplicantMigrationAssertions(
+                        r,
+                        "the current census had no registered, accessible, labor-supplying " +
+                        "source to anchor the direct applicant fixture");
+                    return;
+                }
+
+                Settlement migrationSettlement = IntercolonyMarketAccess.FindSettlement(
+                    sourceProspect.settlementId);
+                controlledProfile = migrationSettlement == null
+                    ? null
+                    : state.GetProfile(migrationSettlement);
+                if (controlledProfile == null)
+                {
+                    SkipEmergencyApplicantMigrationAssertions(
+                        r,
+                        "the selected source had no economic profile for the controlled " +
+                        "emergency quote fixture");
+                    return;
+                }
+
+                savedControlledCapability = controlledProfile.rapidLogisticsCapability;
+                controlledProfile.rapidLogisticsCapability =
+                    SettlementRapidLogisticsCapability.DropPodsAvailable;
+                controlledCapabilityChanged = true;
+
+                LaborProspect migrationSource = CopyProspectForEmergencyFixture(
+                    sourceProspect,
+                    sourceProspect.settlementId,
+                    1.25f,
+                    sourceProspect.settlementName);
+                migrationSource.travelDays = emergencyTravelDays;
+
+                // Capture the expected route before migration, independently of the applicant's
+                // default Conventional value. The controlled profile makes this a DropPod quote,
+                // so the transport assertion cannot pass by leaving the enum default in place.
+                EmergencyArrivalQuote expectedQuote =
+                    LaborCandidateService.QuoteEmergencyArrival(state, migrationSource);
+
+                Rand.PushState(0x54_32_01);
+                try
+                {
+                    migratedPawn = migrationSource.Materialise();
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
+
+                Rand.PushState(0x54_33_01);
+                try
+                {
+                    invalidPawn = migrationSource.Materialise();
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
+
+                Rand.PushState(0x54_31_01);
+                try
+                {
+                    ordinaryPawn = migrationSource.Materialise();
+                }
+                finally
+                {
+                    Rand.PopState();
+                }
+
+                if (migratedPawn == null || invalidPawn == null || ordinaryPawn == null)
+                {
+                    SkipEmergencyApplicantMigrationAssertions(
+                        r,
+                        "the controlled source could not materialise all three direct fixture " +
+                        "pawns");
+                    return;
+                }
+
+                state.Postings.Clear();
+
+                emergencyPosting = new JobPosting
+                {
+                    id = -60_401,
+                    termDays = termDays,
+                    wageStructure = WageStructure.Daily,
+                    combatClause = CombatClause.Civilian,
+                    requestedEquipmentLevel = LaborEquipmentLevel.Any,
+                    emergencyDispatch = true,
+                    postedTick = GenTicks.TicksGame,
+                    expiryTick = -1,
+                    status = JobPostingStatus.Open
+                };
+
+                ordinaryPosting = new JobPosting
+                {
+                    id = -60_402,
+                    termDays = termDays,
+                    wageStructure = WageStructure.Daily,
+                    combatClause = CombatClause.Civilian,
+                    requestedEquipmentLevel = LaborEquipmentLevel.Any,
+                    emergencyDispatch = false,
+                    postedTick = GenTicks.TicksGame,
+                    expiryTick = -1,
+                    status = JobPostingStatus.Open
+                };
+
+                migratedApplicant = new JobApplicant
+                {
+                    pawn = migratedPawn,
+                    settlementId = migrationSource.settlementId,
+                    settlementName = migrationSource.settlementName,
+                    factionName = migrationSource.factionName,
+                    faction = migrationSource.faction,
+                    distanceTiles = migrationSource.distanceTiles,
+                    travelDays = migrationSource.travelDays,
+                    emergencyArrivalAvailable = false,
+                    emergencyArrivalTransport = EmploymentArrivalTransport.Conventional,
+                    emergencyArrivalTicks = 0,
+                    emergencyArrivalMethodLabel = "",
+                    requiredSkillLevel = 0,
+                    openMarketAsk = 1,
+                    appliedTick = GenTicks.TicksGame,
+                    sourceCensusRefreshCount = -1,
+                    sourceCensusIndex = -1
+                };
+
+                // V2: the missing source settlement is genuine, so migration must invalidate this
+                // applicant rather than leave it hireable under an Emergency heading.
+                invalidApplicant = new JobApplicant
+                {
+                    pawn = invalidPawn,
+                    settlementId = -1,
+                    settlementName = "missing S4 source",
+                    factionName = migrationSource.factionName,
+                    faction = migrationSource.faction,
+                    distanceTiles = migrationSource.distanceTiles,
+                    travelDays = migrationSource.travelDays,
+                    emergencyArrivalAvailable = false,
+                    emergencyArrivalTransport = EmploymentArrivalTransport.Conventional,
+                    emergencyArrivalTicks = 0,
+                    emergencyArrivalMethodLabel = "",
+                    requiredSkillLevel = 0,
+                    openMarketAsk = 1,
+                    appliedTick = GenTicks.TicksGame,
+                    sourceCensusRefreshCount = -1,
+                    sourceCensusIndex = -1
+                };
+
+                ordinaryApplicant = new JobApplicant
+                {
+                    pawn = ordinaryPawn,
+                    settlementId = migrationSource.settlementId,
+                    settlementName = migrationSource.settlementName,
+                    factionName = migrationSource.factionName,
+                    faction = migrationSource.faction,
+                    distanceTiles = migrationSource.distanceTiles,
+                    travelDays = ordinaryTravelDays,
+                    emergencyArrivalAvailable = false,
+                    emergencyArrivalTransport = EmploymentArrivalTransport.Conventional,
+                    emergencyArrivalTicks = 0,
+                    emergencyArrivalMethodLabel = "",
+                    requiredSkillLevel = 0,
+                    openMarketAsk = 1,
+                    appliedTick = GenTicks.TicksGame,
+                    sourceCensusRefreshCount = -1,
+                    sourceCensusIndex = -1
+                };
+
+                emergencyPosting.Applicants.Add(migratedApplicant);
+                emergencyPosting.Applicants.Add(invalidApplicant);
+                ordinaryPosting.Applicants.Add(ordinaryApplicant);
+                state.AddPosting(emergencyPosting);
+                state.AddPosting(ordinaryPosting);
+
+                // This is the schema-59 saved shape: no frozen quote on either emergency
+                // applicant, no census identity, and a private saveVersion of 59.
+                saveVersionField.SetValue(state, preMigrationVersion);
+                state.MigrateIfNeeded();
+
+                bool quoteFrozen = expectedQuote.available &&
+                    expectedQuote.transport == EmploymentArrivalTransport.DropPod &&
+                    migratedApplicant.emergencyArrivalAvailable &&
+                    migratedApplicant.emergencyArrivalTicks > 0 &&
+                    migratedApplicant.emergencyArrivalTransport == expectedQuote.transport &&
+                    migratedApplicant.emergencyArrivalTicks == expectedQuote.arrivalTicks &&
+                    !String.IsNullOrEmpty(migratedApplicant.emergencyArrivalMethodLabel) &&
+                    migratedApplicant.emergencyArrivalMethodLabel == expectedQuote.methodLabel;
+                r.Check(
+                    quoteFrozen,
+                    EmergencyApplicantMigrationQuoteLabel,
+                    $"saved false/Conventional/0; expected " +
+                    $"{expectedQuote.available}/{expectedQuote.transport}/" +
+                    $"{expectedQuote.arrivalTicks}/\"{expectedQuote.methodLabel}\"; actual " +
+                    $"{migratedApplicant.emergencyArrivalAvailable}/" +
+                    $"{migratedApplicant.emergencyArrivalTransport}/" +
+                    $"{migratedApplicant.emergencyArrivalTicks}/\"" +
+                    $"{migratedApplicant.emergencyArrivalMethodLabel}\"; save version " +
+                    $"{state.SaveVersion}");
+
+                int unfrozenEmergencyApplicants = 0;
+                foreach (JobApplicant applicant in emergencyPosting.Applicants)
+                {
+                    if (applicant != null && !applicant.emergencyArrivalAvailable)
+                    {
+                        unfrozenEmergencyApplicants++;
+                    }
+                }
+
+                bool invalidated = !emergencyPosting.Applicants.Contains(invalidApplicant) &&
+                    invalidApplicant.pawn == null &&
+                    unfrozenEmergencyApplicants == 0;
+                r.Check(
+                    invalidated,
+                    EmergencyApplicantMigrationInvalidationLabel,
+                    $"invalid applicant still listed " +
+                    $"{emergencyPosting.Applicants.Contains(invalidApplicant)}; " +
+                    $"invalid pawn released {invalidApplicant.pawn == null}; " +
+                    $"unfrozen Emergency applicants {unfrozenEmergencyApplicants}");
+
+                bool ordinaryUntouched = ordinaryPosting.Applicants.Count == 1 &&
+                    object.ReferenceEquals(ordinaryPosting.Applicants[0], ordinaryApplicant) &&
+                    ordinaryApplicant.travelDays == ordinaryTravelDays &&
+                    !ordinaryApplicant.emergencyArrivalAvailable &&
+                    ordinaryApplicant.emergencyArrivalTransport ==
+                        EmploymentArrivalTransport.Conventional &&
+                    ordinaryApplicant.emergencyArrivalTicks == 0 &&
+                    String.IsNullOrEmpty(ordinaryApplicant.emergencyArrivalMethodLabel) &&
+                    !ordinaryApplicant.HasSourceCensusIdentity;
+                r.Check(
+                    ordinaryUntouched,
+                    EmergencyApplicantMigrationOrdinaryLabel,
+                    $"ordinary applicant count {ordinaryPosting.Applicants.Count}; travel " +
+                    $"{ordinaryApplicant.travelDays}d (expected {ordinaryTravelDays}d); " +
+                    $"quote {ordinaryApplicant.emergencyArrivalAvailable}/" +
+                    $"{ordinaryApplicant.emergencyArrivalTransport}/" +
+                    $"{ordinaryApplicant.emergencyArrivalTicks}; identity present " +
+                    $"{ordinaryApplicant.HasSourceCensusIdentity}");
+
+                r.Check(
+                    migratedApplicant.HasSourceCensusIdentity,
+                    EmergencyApplicantMigrationIdentityLabel,
+                    "the legacy emergency applicant has a current census identity or the " +
+                    "int.MaxValue marker pair");
+            }
+            catch (Exception ex)
+            {
+                string failure =
+                    $"schema 59 -> 60 migration threw {ex.GetType().Name}: {ex.Message}";
+                r.Check(false, EmergencyApplicantMigrationQuoteLabel, failure);
+                r.Check(false, EmergencyApplicantMigrationInvalidationLabel, failure);
+                r.Check(false, EmergencyApplicantMigrationOrdinaryLabel, failure);
+                r.Check(false, EmergencyApplicantMigrationIdentityLabel, failure);
+            }
+            finally
+            {
+                try
+                {
+                    RestorePostingList(
+                        state, savedPostings, "self-test emergency applicant migration cleanup");
+                }
+                finally
+                {
+                    if (savedCensus != null)
+                    {
+                        savedCensus.Clear();
+                        if (savedCensusContents != null)
+                        {
+                            savedCensus.AddRange(savedCensusContents);
+                        }
+                    }
+
+                    censusField.SetValue(null, savedCensus);
+                    censusRefreshField.SetValue(null, savedCensusRefreshCount);
+
+                    if (savedPool != null)
+                    {
+                        savedPool.Clear();
+                        if (savedPoolContents != null)
+                        {
+                            savedPool.AddRange(savedPoolContents);
+                        }
+                    }
+
+                    if (controlledCapabilityChanged && controlledProfile != null)
+                    {
+                        controlledProfile.rapidLogisticsCapability = savedControlledCapability;
+                    }
+
+                    poolRefreshField.SetValue(null, savedPoolRefreshCount);
+                    poolOwnerField.SetValue(null, savedPoolOwner);
+                    if (savedProfileCache != null)
+                    {
+                        savedProfileCache.Clear();
+                        if (savedProfileCacheContents != null)
+                        {
+                            foreach (KeyValuePair<int, SettlementEconomicProfile> entry in
+                                savedProfileCacheContents)
+                            {
+                                savedProfileCache[entry.Key] = entry.Value;
+                            }
+                        }
+                    }
+
+                    profileCacheField.SetValue(state, savedProfileCache);
+                    economySeedField.SetValue(state, savedEconomySeed);
+                    saveVersionField.SetValue(state, savedSaveVersion);
+
+                    DiscardEquipmentFixturePawn(migratedPawn);
+                    DiscardEquipmentFixturePawn(invalidPawn);
+                    DiscardEquipmentFixturePawn(ordinaryPawn);
+                }
+            }
+        }
+
+        private static void SkipEmergencyApplicantMigrationAssertions(
+            Results r, string reason)
+        {
+            r.Skip(EmergencyApplicantMigrationQuoteLabel, reason);
+            r.Skip(EmergencyApplicantMigrationInvalidationLabel, reason);
+            r.Skip(EmergencyApplicantMigrationOrdinaryLabel, reason);
+            r.Skip(EmergencyApplicantMigrationIdentityLabel, reason);
         }
 
         private static void SkipFrozenEmergencyArrivalAssertions(
