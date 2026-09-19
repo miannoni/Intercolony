@@ -2389,6 +2389,35 @@ test.
 leaves normally. If it reads as an immediate firing to a player, report that as a copy problem even
 though the wiring is correct and proven.
 
+### F19/F20: the Business benchmark and direct labour consistency need a human read
+
+Added 2026-09-19 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P3 of the Playtest
+Correction Pass II run, shipped 2026-09-19. Automated evidence is complete — whole suite **1749 passed
+/ 0 failed / 19 skipped**, exit **0**, log clean, world-pawn delta **0** — and both of the plan's
+mutation clauses were discharged: substituting vanilla generic `MarketValue` turned the **concrete stuff
+is respected** assertion red (**Gold** and **Plasteel** both reported **118.8**), and threading `stuffDef`
+into the labour partition turned both material-invariance assertions red (**Gold labour 165** versus
+**Silver 151.5**). What remains cannot be settled by a test.
+
+**Steps.**
+
+1. Open **Business** and inspect a few material-specific agreements. **Median market price** should now
+   normally be populated rather than showing a dash. Confirm the numbers look plausible for the product
+   rather than merely present.
+2. Compare two otherwise-identical agreements that differ only in material — a **Gold** and a **Silver**
+   version of the same product. Materials and the market benchmark should differ. **Paid labour** should
+   **NOT** differ purely because of the material.
+3. The indicative benchmark is a **DELIVERED** price — it includes the supplier's delivery charge — and
+   the tooltip says so. This convention was chosen during the run because the plan did not decide it, and
+   it changes the number the player reads. Judge whether delivered is the right basis to compare against,
+   or whether a pickup price would be more useful.
+4. Confirm an agreement left at **Any material** still shows a dash with its tooltip reason, rather than
+   a blended number. That dash is deliberate: there is no honest single price across wood, gold and steel.
+
+Also note: the benchmark prefers current listing and open-RFQ evidence, and only falls back to the
+indicative supplier quote when there is none. If a figure ever looks wrong, which tier produced it is the
+first thing to establish.
+
 ---
 
 ## Proven in play
