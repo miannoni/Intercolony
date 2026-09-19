@@ -2075,6 +2075,14 @@ namespace Intercolony
                 "the production margin contains only revenue, materials and paid labour";
             const string deliveryAssertion =
                 "a seller-delivery premium is not subtracted as a cost";
+            const string materialLaborCycleAssertion =
+                "F20 Gold/Silver material does not change paid labour per cycle";
+            const string materialLaborUnitAssertion =
+                "F20 Gold/Silver material does not change paid labour per unit";
+            const string materialCostAssertion =
+                "the same Gold/Silver product has different direct material costs";
+            const string cadenceQuantityAssertion =
+                "F20 cadence and quantity changes follow the documented approximation";
             string[] labels =
             {
                 noEmployeeAssertion,
@@ -2082,8 +2090,16 @@ namespace Intercolony
                 ineligibleAssertion,
                 sharedAssertion,
                 marginAssertion,
-                deliveryAssertion
+                deliveryAssertion,
+                materialLaborCycleAssertion,
+                materialLaborUnitAssertion,
+                materialCostAssertion,
+                cadenceQuantityAssertion
             };
+            const int materialLaborCycleIndex = 6;
+            const int materialLaborUnitIndex = 7;
+            const int materialCostIndex = 8;
+            const int cadenceQuantityIndex = 9;
             bool[] emitted = new bool[labels.Length];
 
             void CheckLabour(int index, bool condition, string detail)
@@ -2121,6 +2137,52 @@ namespace Intercolony
                        $"{estimate.directLabor.cost:0.###}; direct payroll " +
                        $"{estimate.directPayroll}; eligible employees " +
                        $"{estimate.directLabor.eligibleEmployeeCount}";
+            }
+
+            string F20EstimateDetail(BusinessReportService.ContractEstimate estimate)
+            {
+                if (estimate == null || estimate.contract == null ||
+                    estimate.directLabor == null || estimate.directInputs == null)
+                {
+                    return "<missing estimate>";
+                }
+
+                int quantity = estimate.contract.quantityPerCycle;
+                float labourPerUnit = quantity > 0
+                    ? estimate.directPayroll / (float)quantity
+                    : 0f;
+                float rawLabourPerUnit = quantity > 0
+                    ? estimate.directLabor.cost / quantity
+                    : 0f;
+                float materialsPerUnit = quantity > 0
+                    ? estimate.directInputsIfBought / (float)quantity
+                    : 0f;
+                return $"stuff {estimate.contract.stuffDef?.defName ?? "<none>"}; " +
+                       $"cycle labour {estimate.directPayroll}; labour/unit " +
+                       $"{labourPerUnit:0.###}; raw labour {estimate.directLabor.cost:0.###}; " +
+                       $"raw labour/unit {rawLabourPerUnit:0.###}; materials " +
+                       $"{estimate.directInputsIfBought}; materials/unit " +
+                       $"{materialsPerUnit:0.###}; labour status {estimate.directLabor.status}; " +
+                       $"materials status {estimate.directInputs.status}";
+            }
+
+            bool HasResolvedPaidLabour(BusinessReportService.ContractEstimate estimate)
+            {
+                return estimate != null && estimate.contract != null &&
+                       estimate.contract.quantityPerCycle > 0 &&
+                       estimate.directLabor != null &&
+                       estimate.directLabor.status ==
+                           BusinessReportService.DirectLaborCostStatus.Resolved &&
+                       estimate.directLabor.cost > 0f && estimate.directPayroll < 0;
+            }
+
+            bool HasResolvedMaterials(BusinessReportService.ContractEstimate estimate)
+            {
+                return estimate != null && estimate.directInputs != null &&
+                       estimate.directInputs.status ==
+                           BusinessReportService.DirectInputCostStatus.Resolved &&
+                       estimate.directInputs.hasDirectInputs &&
+                       estimate.directInputsIfBought < 0;
             }
 
             BusinessReportService.ContractEstimate Measure(
@@ -2412,6 +2474,15 @@ namespace Intercolony
                     return;
                 }
 
+                ThingDef materialInvariantProduct;
+                string materialInvariantFixtureReason;
+                bool hasMaterialInvariantFixture = TryFindGoldSilverLabourFixture(
+                    thingDefs,
+                    recipes,
+                    workerConstructionSkill,
+                    out materialInvariantProduct,
+                    out materialInvariantFixtureReason);
+
                 worker.workSettings.SetPriority(constructionWorkType, 3);
                 fixtureEmployment = new EmploymentContract
                 {
@@ -2477,6 +2548,126 @@ namespace Intercolony
                     (ineligibleFailure == null ? "" : $"; exception {ineligibleFailure}"));
 
                 worker.workSettings.SetPriority(constructionWorkType, 3);
+                if (!hasMaterialInvariantFixture)
+                {
+                    for (int i = materialLaborCycleIndex; i < labels.Length; i++)
+                    {
+                        SkipLabour(i, materialInvariantFixtureReason);
+                    }
+                }
+                else
+                {
+                    const int materialQuantity = 2;
+                    RecurringContract goldContract = MakeLabourInvariantContract(
+                        materialInvariantProduct, ThingDefOf.Gold, materialQuantity, cycleDays);
+                    RecurringContract silverContract = MakeLabourInvariantContract(
+                        materialInvariantProduct, ThingDefOf.Silver, materialQuantity, cycleDays);
+                    // Keep both material variants in the temporary active-agreement set. That
+                    // makes a mutation that keys relevant labor goods by stuffDef observable.
+                    fixtureContracts.Add(goldContract);
+                    state.AddContract(goldContract);
+                    fixtureContracts.Add(silverContract);
+                    state.AddContract(silverContract);
+
+                    string goldFailure;
+                    string silverFailure;
+                    BusinessReportService.ContractEstimate goldEstimate = Measure(
+                        goldContract, out goldFailure);
+                    BusinessReportService.ContractEstimate silverEstimate = Measure(
+                        silverContract, out silverFailure);
+                    string materialDetails =
+                        $"product {materialInvariantProduct.defName}; shared id {goldContract.id}; " +
+                        $"settlement {goldContract.settlementName}; faction " +
+                        $"{goldContract.factionName}; quantity {materialQuantity}; cadence " +
+                        $"{cycleDays} days; min quality " +
+                        $"{(goldContract.minQuality.HasValue ? goldContract.minQuality.ToString() : "<none>")}; " +
+                        $"total cycles {goldContract.totalCycles}; unit price " +
+                        $"{goldContract.unitPrice:0.###}; fulfillment {goldContract.fulfillment}; " +
+                        $"status {goldContract.status}; " +
+                        $"{F20EstimateDetail(goldEstimate)} / " +
+                        $"{F20EstimateDetail(silverEstimate)}" +
+                        (goldFailure == null ? "" : $"; Gold exception {goldFailure}") +
+                        (silverFailure == null ? "" : $"; Silver exception {silverFailure}");
+
+                    // Mutation expected RED: change RelevantProductionGoods/eligibleGoods
+                    // partitioning from ThingDef to (ThingDef, stuffDef), threading each
+                    // contract's stuffDef into EstimateDirectLabor; this assertion must fail.
+                    CheckLabour(
+                        materialLaborCycleIndex,
+                        HasResolvedPaidLabour(goldEstimate) &&
+                        HasResolvedPaidLabour(silverEstimate) &&
+                        Mathf.Approximately(
+                            goldEstimate.directLabor.cost,
+                            silverEstimate.directLabor.cost) &&
+                        goldEstimate.directPayroll == silverEstimate.directPayroll,
+                        materialDetails);
+
+                    CheckLabour(
+                        materialLaborUnitIndex,
+                        HasResolvedPaidLabour(goldEstimate) &&
+                        HasResolvedPaidLabour(silverEstimate) &&
+                        Mathf.Approximately(
+                            goldEstimate.directLabor.cost / materialQuantity,
+                            silverEstimate.directLabor.cost / materialQuantity) &&
+                        Mathf.Approximately(
+                            goldEstimate.directPayroll / (float)materialQuantity,
+                            silverEstimate.directPayroll / (float)materialQuantity),
+                        materialDetails);
+
+                    CheckLabour(
+                        materialCostIndex,
+                        HasResolvedMaterials(goldEstimate) &&
+                        HasResolvedMaterials(silverEstimate) &&
+                        goldEstimate.directInputsIfBought !=
+                            silverEstimate.directInputsIfBought,
+                        materialDetails);
+
+                    RecurringContract longerCadenceContract = MakeLabourInvariantContract(
+                        materialInvariantProduct, ThingDefOf.Gold, materialQuantity,
+                        cycleDays * 2);
+                    RecurringContract largerQuantityContract = MakeLabourInvariantContract(
+                        materialInvariantProduct, ThingDefOf.Gold, materialQuantity * 2,
+                        cycleDays);
+                    string longerCadenceFailure;
+                    string largerQuantityFailure;
+                    BusinessReportService.ContractEstimate longerCadenceEstimate = Measure(
+                        longerCadenceContract, out longerCadenceFailure);
+                    BusinessReportService.ContractEstimate largerQuantityEstimate = Measure(
+                        largerQuantityContract, out largerQuantityFailure);
+                    float goldLabourPerUnit = goldEstimate == null
+                        ? 0f
+                        : goldEstimate.directPayroll / (float)materialQuantity;
+                    float largerQuantityLabourPerUnit = largerQuantityEstimate == null
+                        ? 0f
+                        : largerQuantityEstimate.directPayroll /
+                          (float)largerQuantityContract.quantityPerCycle;
+                    bool cadenceMovesCycleLabour =
+                        HasResolvedPaidLabour(goldEstimate) &&
+                        HasResolvedPaidLabour(longerCadenceEstimate) &&
+                        longerCadenceEstimate.directLabor.cost >
+                            goldEstimate.directLabor.cost &&
+                        longerCadenceEstimate.directPayroll <
+                            goldEstimate.directPayroll;
+                    bool quantityMovesDisplayedPerUnit =
+                        HasResolvedPaidLabour(goldEstimate) &&
+                        HasResolvedPaidLabour(largerQuantityEstimate) &&
+                        Mathf.Abs(largerQuantityLabourPerUnit) <
+                            Mathf.Abs(goldLabourPerUnit);
+                    CheckLabour(
+                        cadenceQuantityIndex,
+                        cadenceMovesCycleLabour && quantityMovesDisplayedPerUnit,
+                        $"short cadence {cycleDays} days: {F20EstimateDetail(goldEstimate)}; " +
+                        $"long cadence {cycleDays * 2} days: " +
+                        $"{F20EstimateDetail(longerCadenceEstimate)}; quantity " +
+                        $"{materialQuantity}: {goldLabourPerUnit:0.###} labour/unit; quantity " +
+                        $"{largerQuantityContract.quantityPerCycle}: " +
+                        $"{largerQuantityLabourPerUnit:0.###} labour/unit" +
+                        (longerCadenceFailure == null
+                            ? "" : $"; long-cadence exception {longerCadenceFailure}") +
+                        (largerQuantityFailure == null
+                            ? "" : $"; larger-quantity exception {largerQuantityFailure}"));
+                }
+
                 if (secondaryContract == null)
                 {
                     SkipLabour(
@@ -2688,6 +2879,125 @@ namespace Intercolony
                     $"{employments.Count} employment(s), {contracts.Count} agreement(s), and " +
                     $"the map pawn's Construction priority {savedConstructionPriority}.");
             }
+        }
+
+        private static bool TryFindGoldSilverLabourFixture(
+            List<ThingDef> thingDefs,
+            List<RecipeDef> recipes,
+            SkillRecord workerConstructionSkill,
+            out ThingDef product,
+            out string reason)
+        {
+            product = null;
+            reason = null;
+            ThingDef gold = ThingDefOf.Gold;
+            ThingDef silver = ThingDefOf.Silver;
+            if (gold == null || silver == null)
+            {
+                reason = "ThingDefOf.Gold and ThingDefOf.Silver were unavailable";
+                return false;
+            }
+
+            int candidatesExamined = 0;
+            int goldSilverCandidates = 0;
+            for (int i = 0; i < thingDefs.Count; i++)
+            {
+                ThingDef candidate = thingDefs[i];
+                if (candidate == null || candidate.category != ThingCategory.Building ||
+                    candidate.building == null || candidate.IsFrame || !candidate.Minifiable ||
+                    !candidate.MadeFromStuff || candidate.blueprintDef == null)
+                {
+                    continue;
+                }
+
+                candidatesExamined++;
+                int requiredSkill = Mathf.Max(0, candidate.constructionSkillPrerequisite);
+                if (requiredSkill > 20 ||
+                    (workerConstructionSkill != null &&
+                     requiredSkill > workerConstructionSkill.Level))
+                {
+                    continue;
+                }
+
+                bool hasRecipe = false;
+                for (int j = 0; j < recipes.Count; j++)
+                {
+                    RecipeDef recipe = recipes[j];
+                    if (recipe != null && !recipe.IsSurgery && recipe.products != null &&
+                        FindTestProduct(recipe, candidate) != null)
+                    {
+                        hasRecipe = true;
+                        break;
+                    }
+                }
+
+                if (hasRecipe)
+                {
+                    continue;
+                }
+
+                List<ThingDef> allowedStuffs;
+                List<ThingDefCountClass> goldCostList;
+                List<ThingDefCountClass> silverCostList;
+                try
+                {
+                    allowedStuffs = new List<ThingDef>(GenStuff.AllowedStuffsFor(candidate));
+                    goldCostList = candidate.CostListAdjusted(gold);
+                    silverCostList = candidate.CostListAdjusted(silver);
+                }
+                catch (System.Exception)
+                {
+                    continue;
+                }
+
+                if (!allowedStuffs.Contains(gold) || !allowedStuffs.Contains(silver) ||
+                    goldCostList == null || goldCostList.Count == 0 ||
+                    silverCostList == null || silverCostList.Count == 0)
+                {
+                    continue;
+                }
+
+                goldSilverCandidates++;
+                // Do not compare Estimate results while selecting this fixture. The assertions
+                // below must observe the real public Estimate path and turn RED if labor starts
+                // depending on stuffDef.
+                product = candidate;
+                reason =
+                    $"searched {candidatesExamined} eligible construction candidates; " +
+                    $"found {goldSilverCandidates} Gold/Silver candidates";
+                return true;
+            }
+
+            reason =
+                $"searched {candidatesExamined} eligible construction candidates; found no " +
+                "minifiable, recipe-free stuffable product that accepts both Gold and Silver " +
+                "with non-empty construction cost lists";
+            return false;
+        }
+
+        private static RecurringContract MakeLabourInvariantContract(
+            ThingDef product, ThingDef stuff, int quantityPerCycle, int cadenceDays)
+        {
+            // These observed contracts are inserted only into temporary fixture state. Sharing
+            // the id keeps every stored term identical; the only field changed by the Gold/Silver
+            // pair is stuffDef.
+            return new RecurringContract
+            {
+                id = -11103,
+                settlementName = "Contract labour self-test",
+                factionName = "Self-test faction",
+                thingDef = product,
+                stuffDef = stuff,
+                minQuality = null,
+                quantityPerCycle = quantityPerCycle,
+                cadenceTicks = cadenceDays * GenDate.TicksPerDay,
+                totalCycles = 5,
+                cyclesCompleted = 0,
+                cyclesFailed = 0,
+                unitPrice = 100f,
+                fulfillment = FulfillmentMode.SellerDelivery,
+                status = ContractStatus.Active
+            };
         }
 
         private static RecurringContract MakeBenchmarkContract(
