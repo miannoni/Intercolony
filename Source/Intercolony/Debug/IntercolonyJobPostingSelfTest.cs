@@ -3423,7 +3423,9 @@ namespace Intercolony
             List<JobPosting> savedPostings = null;
             List<Letter> savedLetters = null;
             List<IArchivable> savedArchivables = null;
-            List<Skyfaller> savedSkyfallers = null;
+            List<Skyfaller> s3SkyfallersBeforeLaunch = null;
+            Skyfaller s3FixtureSkyfaller = null;
+            ActiveTransporter s3FixtureActiveTransporter = null;
             Archive s3Archive = null;
             TickManager s3TickManager = null;
             int savedS3Tick = 0;
@@ -3623,7 +3625,9 @@ namespace Intercolony
                         savedEmployments = new List<EmploymentContract>(state.Employments);
                         savedPostings = new List<JobPosting>(state.Postings);
 
-                        savedSkyfallers = new List<Skyfaller>(
+                        // Keep this baseline only to prove the matching pod was launched by S3;
+                        // teardown uses the explicit fixture identities captured below.
+                        s3SkyfallersBeforeLaunch = new List<Skyfaller>(
                             map.listerThings.GetThingsOfType<Skyfaller>());
                         s3TickManager = Find.TickManager;
                         savedS3Tick = s3TickManager.TicksGame;
@@ -3662,7 +3666,7 @@ namespace Intercolony
                         foreach (DropPodIncoming incomingPod in
                             map.listerThings.GetThingsOfType<DropPodIncoming>())
                         {
-                            if (incomingPod == null || savedSkyfallers.Contains(incomingPod) ||
+                            if (incomingPod == null || s3SkyfallersBeforeLaunch.Contains(incomingPod) ||
                                 incomingPod.innerContainer == null ||
                                 incomingPod.innerContainer.Count == 0 ||
                                 !(incomingPod.innerContainer[0] is ActiveTransporter))
@@ -3700,6 +3704,9 @@ namespace Intercolony
                         else
                         {
                             DropPodIncoming launchedPod = matchingIncomingPods[0];
+                            s3FixtureSkyfaller = launchedPod;
+                            s3FixtureActiveTransporter =
+                                launchedPod.innerContainer[0] as ActiveTransporter;
                             ActiveTransporterInfo launchedPodContents = launchedPod.Contents;
                             s3InitialTicksToImpact = launchedPod.ticksToImpact;
                             s3OpenDelay = launchedPodContents.openDelay;
@@ -3803,26 +3810,10 @@ namespace Intercolony
                     state.Employments.Remove(reloadedContract);
                 }
 
-                if (savedSkyfallers != null && map.listerThings != null)
+                if (s3SkyfallersBeforeLaunch != null)
                 {
-                    List<Skyfaller> currentSkyfallers = new List<Skyfaller>(
-                        map.listerThings.GetThingsOfType<Skyfaller>());
-                    foreach (Skyfaller skyfaller in currentSkyfallers)
-                    {
-                        if (skyfaller != null && !savedSkyfallers.Contains(skyfaller))
-                        {
-                            try
-                            {
-                                skyfaller.Destroy(DestroyMode.Vanish);
-                            }
-                            catch (Exception ex)
-                            {
-                                IntercolonyLog.Warning(
-                                    $"S3 skyfaller cleanup failed: {ex.GetType().Name}: " +
-                                    ex.Message);
-                            }
-                        }
-                    }
+                    CleanupS3EmergencyPodObjects(
+                        s3FixtureSkyfaller, s3FixtureActiveTransporter);
                 }
 
                 DiscardEquipmentFixturePawn(reloadedContractPawn);
@@ -3915,6 +3906,45 @@ namespace Intercolony
                 {
                     dropPodArrivalLettersSent.Clear();
                     dropPodArrivalLettersSent.UnionWith(savedDropPodArrivalLettersSent);
+                }
+            }
+        }
+
+        private static void CleanupS3EmergencyPodObjects(
+            Skyfaller fixtureSkyfaller, ActiveTransporter fixtureActiveTransporter)
+        {
+            if (fixtureSkyfaller == null || fixtureActiveTransporter == null)
+            {
+                IntercolonyLog.Warning(
+                    "S3 cleanup could not identify both fixture-created pod objects by identity; " +
+                    "leaving all skyfallers and active transporters untouched.");
+                return;
+            }
+
+            if (!fixtureSkyfaller.Destroyed)
+            {
+                try
+                {
+                    fixtureSkyfaller.Destroy(DestroyMode.Vanish);
+                }
+                catch (Exception ex)
+                {
+                    IntercolonyLog.Warning(
+                        $"S3 skyfaller cleanup failed: {ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            if (!fixtureActiveTransporter.Destroyed)
+            {
+                try
+                {
+                    fixtureActiveTransporter.Destroy(DestroyMode.Vanish);
+                }
+                catch (Exception ex)
+                {
+                    IntercolonyLog.Warning(
+                        $"S3 active-transporter cleanup failed: " +
+                        $"{ex.GetType().Name}: {ex.Message}");
                 }
             }
         }
