@@ -143,18 +143,8 @@ namespace Intercolony
         internal enum EmployeeLifecycleActionKind
         {
             None,
-            DeclineTransition,
-            DeclineRenewal,
             Cancel,
             Dismiss
-        }
-
-        internal static EmployeeLifecycleActionKind ResolveLifecycleAction(
-            EmploymentContract contract, bool hasLiveTransitionOffer, bool hasLiveRenewalOffer)
-        {
-            // Kept as a compatibility overload for the existing self-test surface. Offer state
-            // belongs to the expanded action groups, never to the header slot.
-            return ResolveLifecycleAction(contract);
         }
 
         internal static EmployeeLifecycleActionKind ResolveLifecycleAction(EmploymentContract contract)
@@ -181,10 +171,6 @@ namespace Intercolony
         {
             switch (kind)
             {
-                case EmployeeLifecycleActionKind.DeclineTransition:
-                    return "Not now";
-                case EmployeeLifecycleActionKind.DeclineRenewal:
-                    return "Let them go";
                 case EmployeeLifecycleActionKind.Cancel:
                     return "Cancel";
                 case EmployeeLifecycleActionKind.Dismiss:
@@ -198,10 +184,6 @@ namespace Intercolony
         {
             switch (kind)
             {
-                case EmployeeLifecycleActionKind.DeclineTransition:
-                    return "Decline the offer to stay permanently. They finish their current term.";
-                case EmployeeLifecycleActionKind.DeclineRenewal:
-                    return "Let them go at the end of the term instead of renewing.";
                 case EmployeeLifecycleActionKind.Cancel:
                     return "Cancel this contract before the worker arrives.";
                 case EmployeeLifecycleActionKind.Dismiss:

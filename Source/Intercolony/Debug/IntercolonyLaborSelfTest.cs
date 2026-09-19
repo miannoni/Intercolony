@@ -43,6 +43,30 @@ namespace Intercolony
         // cutoff, so the quote checks reuse a real candidate identity at these test distances.
         private const float CloseConventionalFixtureDistanceTiles = 10f;
         private const float DistantConventionalFixtureDistanceTiles = 24f;
+
+        private sealed class EmployeeCardFixture
+        {
+            public readonly string label;
+            public readonly EmploymentContract contract;
+
+            public EmployeeCardFixture(string label, EmploymentContract contract)
+            {
+                this.label = label;
+                this.contract = contract;
+            }
+        }
+
+        private sealed class EmployeeActionObservation
+        {
+            public Rect rect;
+            public string label;
+            public bool available;
+            public string tooltip;
+            public System.Action callback;
+        }
+
+        private static List<EmployeeActionObservation> employeeActionObservations;
+
         private class Results
         {
             public readonly StringBuilder sb = new StringBuilder();
@@ -2998,78 +3022,77 @@ namespace Intercolony
 
         private static void CheckEmployeeCardLifecycle(Results r)
         {
-            EmploymentContract bothOffersContract = new EmploymentContract
+            int now = GenTicks.TicksGame;
+            EmployeeCardFixture ordinary = new EmployeeCardFixture(
+                "ordinary active fixed-term",
+                BuildEmployeeCardFixtureContract(161701, "Ordinary worker", EmploymentStatus.Active,
+                    30, 0, now));
+            EmployeeCardFixture travelling = new EmployeeCardFixture(
+                "travelling",
+                BuildEmployeeCardFixtureContract(161702, "Travelling worker",
+                    EmploymentStatus.Travelling, 30, 0, now));
+            EmployeeCardFixture liveRenewal = new EmployeeCardFixture(
+                "live renewal offer",
+                BuildEmployeeCardFixtureContract(161703, "Renewal worker", EmploymentStatus.Active,
+                    30, 0, now));
+            liveRenewal.contract.renewalOffered = true;
+            liveRenewal.contract.renewalWage = 125;
+
+            EmployeeCardFixture liveTransition = new EmployeeCardFixture(
+                "live permanent-transition offer",
+                BuildEmployeeCardFixtureContract(161704, "Transition worker",
+                    EmploymentStatus.Active, 30, 0, now));
+            liveTransition.contract.transitionOffered = true;
+
+            EmployeeCardFixture arrears = new EmployeeCardFixture(
+                "arrears",
+                BuildEmployeeCardFixtureContract(161705, "Arrears worker", EmploymentStatus.Active,
+                    30, 37, now));
+            EmployeeCardFixture openEnded = new EmployeeCardFixture(
+                "open-ended active",
+                BuildEmployeeCardFixtureContract(161706, "Open-ended worker", EmploymentStatus.Active,
+                    0, 0, now));
+
+            EmployeeCardFixture[] fixtures =
             {
-                status = EmploymentStatus.Active
+                ordinary,
+                travelling,
+                liveRenewal,
+                liveTransition,
+                arrears,
+                openEnded
             };
-            EmploymentContract travellingWithRenewalContract = new EmploymentContract
-            {
-                status = EmploymentStatus.Travelling
-            };
-            EmploymentContract travellingContract = new EmploymentContract
-            {
-                status = EmploymentStatus.Travelling
-            };
-            EmploymentContract activeContract = new EmploymentContract
-            {
-                status = EmploymentStatus.Active
-            };
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind ordinaryHeader =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(ordinary.contract);
+            string ordinaryHeaderLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
+                ordinaryHeader);
+            r.Check(
+                ordinaryHeader == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss &&
+                ordinaryHeaderLabel == "Dismiss",
+                "A1 ordinary active fixed-term header action is Dismiss",
+                $"ResolveLifecycleAction -> {ordinaryHeader}, label " +
+                $"\"{ordinaryHeaderLabel ?? "<null>"}\"; EXPECTED Dismiss");
+
+            MainTabWindow_Intercolony.EmployeeLifecycleActionKind travellingHeader =
+                MainTabWindow_Intercolony.ResolveLifecycleAction(travelling.contract);
+            string travellingHeaderLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
+                travellingHeader);
+            r.Check(
+                travellingHeader == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel &&
+                travellingHeaderLabel == "Cancel",
+                "A2 travelling header action is Cancel",
+                $"ResolveLifecycleAction -> {travellingHeader}, label " +
+                $"\"{travellingHeaderLabel ?? "<null>"}\"; EXPECTED Cancel");
+
+            // These existing terminal/null resolver checks remain independent of the six card
+            // fixtures and continue to observe the real one-argument resolver.
             EmploymentContract severedContract = new EmploymentContract
             {
                 status = EmploymentStatus.Severed
             };
-            EmploymentContract arrearsContract = new EmploymentContract
-            {
-                status = EmploymentStatus.Active,
-                arrearsSilver = 1
-            };
-            EmploymentContract noArrearsContract = new EmploymentContract
-            {
-                status = EmploymentStatus.Active,
-                arrearsSilver = 0
-            };
-
-            MainTabWindow_Intercolony.EmployeeLifecycleActionKind bothOffersObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(
-                    bothOffersContract, true, true);
-            r.Check(
-                bothOffersObserved ==
-                    MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition,
-                "both live offers prefer transition decline",
-                $"OBSERVED {bothOffersObserved}; EXPECTED " +
-                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition}");
-
-            MainTabWindow_Intercolony.EmployeeLifecycleActionKind travellingRenewalObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(
-                    travellingWithRenewalContract, false, true);
-            r.Check(
-                travellingRenewalObserved ==
-                    MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal,
-                "live renewal beats travelling cancel",
-                $"OBSERVED {travellingRenewalObserved}; EXPECTED " +
-                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal}");
-
-            MainTabWindow_Intercolony.EmployeeLifecycleActionKind travellingObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(
-                    travellingContract, false, false);
-            r.Check(
-                travellingObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel,
-                "travelling with no offers cancels",
-                $"OBSERVED {travellingObserved}; EXPECTED " +
-                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel}");
-
-            MainTabWindow_Intercolony.EmployeeLifecycleActionKind activeObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(
-                    activeContract, false, false);
-            r.Check(
-                activeObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss,
-                "active with no offers dismisses",
-                $"OBSERVED {activeObserved}; EXPECTED " +
-                $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss}");
-
             MainTabWindow_Intercolony.EmployeeLifecycleActionKind severedObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(
-                    severedContract, false, false);
+                MainTabWindow_Intercolony.ResolveLifecycleAction(severedContract);
             r.Check(
                 severedObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None,
                 "severed with no offers has no action",
@@ -3077,82 +3100,521 @@ namespace Intercolony
                 $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None}");
 
             MainTabWindow_Intercolony.EmployeeLifecycleActionKind nullObserved =
-                MainTabWindow_Intercolony.ResolveLifecycleAction(null, true, true);
+                MainTabWindow_Intercolony.ResolveLifecycleAction(null);
             r.Check(
                 nullObserved == MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None,
                 "null contract has no action",
                 $"OBSERVED {nullObserved}; EXPECTED " +
                 $"{MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None}");
 
-            string declineRenewalLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal);
-            r.Check(
-                declineRenewalLabel == "Let them go",
-                "renewal decline label is short",
-                $"OBSERVED \"{declineRenewalLabel ?? "<null>"}\"; EXPECTED \"Let them go\"");
+            MethodInfo employeeActionDefinitionsFor = typeof(MainTabWindow_Intercolony).GetMethod(
+                "EmployeeActionDefinitionsFor",
+                BindingFlags.Static | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(EmploymentContract) },
+                null);
+            Type layoutType = typeof(MainTabWindow_Intercolony).GetNestedType(
+                "EmployeeRowLayout", BindingFlags.NonPublic);
+            MethodInfo layoutFor = layoutType?.GetMethod(
+                "For",
+                BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(Rect), typeof(EmploymentContract), typeof(bool), typeof(bool) },
+                null);
+            MethodInfo drawEmployeeActionStack = typeof(MainTabWindow_Intercolony).GetMethod(
+                "DrawEmployeeActionStack",
+                BindingFlags.Instance | BindingFlags.NonPublic,
+                null,
+                new[] { layoutType, typeof(EmploymentContract), typeof(bool), typeof(bool) },
+                null);
+            MethodInfo drawEmployeeActionButton = typeof(MainTabWindow_Intercolony).GetMethod(
+                "DrawEmployeeActionButton",
+                BindingFlags.Static | BindingFlags.NonPublic,
+                null,
+                new[] { typeof(Rect), typeof(string), typeof(bool), typeof(string),
+                    typeof(System.Action) },
+                null);
+            FieldInfo layoutDefinitionsField = layoutType?.GetField(
+                "actionDefinitions", BindingFlags.Instance | BindingFlags.Public |
+                BindingFlags.NonPublic);
+            FieldInfo actionStackField = layoutType?.GetField(
+                "actionStack", BindingFlags.Instance | BindingFlags.Public |
+                BindingFlags.NonPublic);
+            FieldInfo layoutHeightField = layoutType?.GetField(
+                "height", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-            string noneLabel = MainTabWindow_Intercolony.LifecycleActionLabel(
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.None);
-            MainTabWindow_Intercolony.EmployeeLifecycleActionKind[] labelledKinds =
-            {
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineTransition,
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.DeclineRenewal,
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Cancel,
-                MainTabWindow_Intercolony.EmployeeLifecycleActionKind.Dismiss
-            };
-            bool everyOtherLabelNonEmpty = true;
-            StringBuilder otherLabels = new StringBuilder();
-            for (int i = 0; i < labelledKinds.Length; i++)
-            {
-                string label = MainTabWindow_Intercolony.LifecycleActionLabel(labelledKinds[i]);
-                if (i > 0)
-                {
-                    otherLabels.Append(", ");
-                }
+            MethodInfo renewalHasLiveOffer = typeof(RenewalService).GetMethod(
+                "HasLiveOffer", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract) }, null);
+            MethodInfo transitionHasLiveOffer = typeof(TransitionService).GetMethod(
+                "HasLiveOffer", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract) }, null);
+            MethodInfo renewalAccept = typeof(RenewalService).GetMethod(
+                "Accept", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract), typeof(string).MakeByRefType() }, null);
+            MethodInfo renewalDecline = typeof(RenewalService).GetMethod(
+                "Decline", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract) }, null);
+            MethodInfo transitionDecline = typeof(TransitionService).GetMethod(
+                "Decline", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract) }, null);
+            MethodInfo payArrears = typeof(PayrollService).GetMethod(
+                "TryPayArrears", BindingFlags.Static | BindingFlags.Public,
+                null, new[] { typeof(EmploymentContract), typeof(Map),
+                    typeof(string).MakeByRefType() }, null);
+            MethodInfo openTransitionDialog = typeof(MainTabWindow_Intercolony).GetMethod(
+                "OpenTransitionDialog", BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new[] { typeof(EmploymentContract) }, null);
+            MethodInfo drawEmployeeRow = typeof(MainTabWindow_Intercolony).GetMethod(
+                "DrawEmployeeRow", BindingFlags.Instance | BindingFlags.NonPublic,
+                null, new[] { typeof(Rect), typeof(EmploymentContract), typeof(int) }, null);
 
-                otherLabels.Append($"{labelledKinds[i]}=\"{label ?? "<null>"}\"");
-                if (String.IsNullOrEmpty(label))
-                {
-                    everyOtherLabelNonEmpty = false;
-                }
-            }
+            Array[] definitions = new Array[fixtures.Length];
+            Array[] layoutDefinitions = new Array[fixtures.Length];
+            object[] layouts = new object[fixtures.Length];
+            List<EmployeeActionObservation>[] observations =
+                new List<EmployeeActionObservation>[fixtures.Length];
+            bool[] hasLiveRenewalOffer = new bool[fixtures.Length];
+            bool[] hasLiveTransitionOffer = new bool[fixtures.Length];
+            string observationFailure = null;
+            const float rowWidth = 720f;
+            Rect rowRect = new Rect(0f, 0f, rowWidth, 0f);
 
-            r.Check(
-                noneLabel == null && everyOtherLabelNonEmpty,
-                "only none has no lifecycle label",
-                $"OBSERVED None=\"{noneLabel ?? "<null>"}\", others [{otherLabels}]; " +
-                "EXPECTED None=null, every other kind non-empty");
-
-            MethodInfo employeeActionCountFor = typeof(MainTabWindow_Intercolony).GetMethod(
-                "EmployeeActionCountFor", BindingFlags.Static | BindingFlags.NonPublic);
-            int arrearsActionCount = -1;
-            int noArrearsActionCount = -1;
-            string actionCountFailure = null;
             try
             {
-                if (employeeActionCountFor == null)
+                if (employeeActionDefinitionsFor == null || layoutType == null || layoutFor == null ||
+                    drawEmployeeActionStack == null || drawEmployeeActionButton == null ||
+                    layoutDefinitionsField == null || actionStackField == null ||
+                    layoutHeightField == null || renewalHasLiveOffer == null ||
+                    transitionHasLiveOffer == null || renewalAccept == null ||
+                    renewalDecline == null || transitionDecline == null || payArrears == null ||
+                    openTransitionDialog == null || drawEmployeeRow == null)
                 {
-                    actionCountFailure = "private method was unavailable";
+                    throw new InvalidOperationException(
+                        "one or more employee-card production members were unavailable");
                 }
-                else
+
+                MainTabWindow_Intercolony window = new MainTabWindow_Intercolony();
+                HarmonyLib.Harmony harmony = new HarmonyLib.Harmony(
+                    "miannoni.intercolony.employee-card.selftest");
+                MethodInfo captureButton = typeof(IntercolonyLaborSelfTest).GetMethod(
+                    nameof(CaptureEmployeeActionButton),
+                    BindingFlags.Static | BindingFlags.NonPublic);
+                if (captureButton == null)
                 {
-                    arrearsActionCount = (int)employeeActionCountFor.Invoke(
-                        null, new object[] { arrearsContract });
-                    noArrearsActionCount = (int)employeeActionCountFor.Invoke(
-                        null, new object[] { noArrearsContract });
+                    throw new InvalidOperationException(
+                        "employee-card button capture method was unavailable");
+                }
+
+                try
+                {
+                    harmony.Patch(
+                        drawEmployeeActionButton,
+                        prefix: new HarmonyLib.HarmonyMethod(captureButton));
+
+                    for (int i = 0; i < fixtures.Length; i++)
+                    {
+                        EmployeeCardFixture fixture = fixtures[i];
+                        definitions[i] = (Array)employeeActionDefinitionsFor.Invoke(
+                            null, new object[] { fixture.contract });
+                        layouts[i] = layoutFor.Invoke(
+                            null, new object[] { rowRect, fixture.contract, false, true });
+                        layoutDefinitions[i] = layoutDefinitionsField.GetValue(layouts[i]) as Array;
+                        hasLiveRenewalOffer[i] = RenewalService.HasLiveOffer(fixture.contract);
+                        hasLiveTransitionOffer[i] = TransitionService.HasLiveOffer(fixture.contract);
+
+                        employeeActionObservations = new List<EmployeeActionObservation>();
+                        drawEmployeeActionStack.Invoke(
+                            window,
+                            new object[]
+                            {
+                                layouts[i],
+                                fixture.contract,
+                                hasLiveRenewalOffer[i],
+                                hasLiveTransitionOffer[i]
+                            });
+                        observations[i] = employeeActionObservations;
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        harmony.Unpatch(
+                            drawEmployeeActionButton,
+                            HarmonyLib.HarmonyPatchType.Prefix,
+                            harmony.Id);
+                    }
+                    finally
+                    {
+                        employeeActionObservations = null;
+                    }
                 }
             }
             catch (Exception ex)
             {
-                actionCountFailure = $"{ex.GetType().Name}: {ex.Message}";
+                observationFailure = $"{ex.GetType().Name}: {ex.Message}";
+                employeeActionObservations = null;
+            }
+
+            bool productionReadsRenewalOffer = CallsMethod(drawEmployeeRow, renewalHasLiveOffer);
+            bool productionReadsTransitionOffer = CallsMethod(drawEmployeeRow, transitionHasLiveOffer);
+
+            EmployeeActionObservation renew = FindEmployeeAction(
+                observations[2], "Renew", startsWith: false);
+            EmployeeActionObservation letThemGo = FindEmployeeAction(
+                observations[2], "Let them go", startsWith: false);
+            bool renewalDefinitionsPresent = ContainsEmployeeAction(
+                    definitions[2], "Renew") &&
+                ContainsEmployeeAction(definitions[2], "LetThemGo") &&
+                ContainsEmployeeAction(layoutDefinitions[2], "Renew") &&
+                ContainsEmployeeAction(layoutDefinitions[2], "LetThemGo");
+            bool renewalOfferIsLive = hasLiveRenewalOffer[2];
+            bool renewalBindingsCorrect = renew != null && letThemGo != null &&
+                renew.available == renewalOfferIsLive &&
+                letThemGo.available == renewalOfferIsLive &&
+                CallsMethod(renew.callback?.Method, renewalAccept) &&
+                CallsMethod(letThemGo.callback?.Method, renewalDecline);
+
+            // D3 negative control: changing Let them go to () => ConfirmDismiss(contract) must turn
+            // this assertion red by removing the renewal-decline callback from this observed slot.
+            r.Check(
+                observationFailure == null && productionReadsRenewalOffer &&
+                renewalDefinitionsPresent && renewalOfferIsLive && renewalBindingsCorrect,
+                "A3 live renewal offer exposes enabled Renew and Let them go actions",
+                $"definitions {DescribeEmployeeActions(definitions[2])}; " +
+                $"Renew {DescribeEmployeeAction(renew)}; " +
+                $"Let them go {DescribeEmployeeAction(letThemGo)}; " +
+                $"RenewalService.HasLiveOffer={renewalOfferIsLive}; " +
+                $"failure={observationFailure ?? "none"}");
+
+            EmployeeActionObservation keepThem = FindEmployeeAction(
+                observations[3], "Keep them", startsWith: false);
+            EmployeeActionObservation notNowWithOffer = FindEmployeeAction(
+                observations[3], "Not now", startsWith: false);
+            bool transitionDefinitionsPresent = ContainsEmployeeAction(
+                    definitions[3], "KeepThem") &&
+                ContainsEmployeeAction(definitions[3], "NotNow") &&
+                ContainsEmployeeAction(layoutDefinitions[3], "KeepThem") &&
+                ContainsEmployeeAction(layoutDefinitions[3], "NotNow");
+            bool transitionOfferIsLive = hasLiveTransitionOffer[3];
+            bool transitionBindingsCorrect = keepThem != null && notNowWithOffer != null &&
+                keepThem.available == transitionOfferIsLive &&
+                notNowWithOffer.available == transitionOfferIsLive &&
+                CallsMethod(keepThem.callback?.Method, openTransitionDialog) &&
+                CallsMethod(notNowWithOffer.callback?.Method, transitionDecline);
+
+            // D3 negative control: changing Not now to () => RenewalService.Decline(contract) must
+            // turn this assertion red because the transition-decline callback disappears.
+            r.Check(
+                observationFailure == null && productionReadsTransitionOffer &&
+                transitionDefinitionsPresent && transitionOfferIsLive &&
+                transitionBindingsCorrect,
+                "A4 live permanent-transition offer exposes Keep them and enabled Not now",
+                $"definitions {DescribeEmployeeActions(definitions[3])}; " +
+                $"Keep them {DescribeEmployeeAction(keepThem)}; " +
+                $"Not now {DescribeEmployeeAction(notNowWithOffer)}; " +
+                $"TransitionService.HasLiveOffer={transitionOfferIsLive}; " +
+                $"failure={observationFailure ?? "none"}");
+
+            EmployeeActionObservation notNowWithoutOffer = FindEmployeeAction(
+                observations[0], "Not now", startsWith: false);
+            bool noTransitionOffer = !hasLiveTransitionOffer[0];
+
+            // D3 negative control: the same Not now -> RenewalService.Decline mutation must also
+            // fail this no-offer assertion because the observed disabled action loses its real
+            // transition-decline service binding.
+            r.Check(
+                observationFailure == null && noTransitionOffer && notNowWithoutOffer != null &&
+                !notNowWithoutOffer.available &&
+                CallsMethod(notNowWithoutOffer.callback?.Method, transitionDecline),
+                "A5 without a transition offer Not now is present but disabled",
+                $"Not now {DescribeEmployeeAction(notNowWithoutOffer)}; " +
+                $"TransitionService.HasLiveOffer={hasLiveTransitionOffer[0]}; " +
+                $"failure={observationFailure ?? "none"}");
+
+            bool everyFixtureHasDisabledNegotiation = observationFailure == null;
+            StringBuilder negotiationDetails = new StringBuilder();
+            for (int i = 0; i < fixtures.Length; i++)
+            {
+                EmployeeActionObservation negotiate = FindEmployeeAction(
+                    observations[i], "Negotiate", startsWith: false);
+                if (i > 0)
+                {
+                    negotiationDetails.Append("; ");
+                }
+
+                negotiationDetails.Append(fixtures[i].label).Append("=")
+                    .Append(DescribeEmployeeAction(negotiate));
+                if (negotiate == null || negotiate.available || negotiate.callback != null)
+                {
+                    everyFixtureHasDisabledNegotiation = false;
+                }
             }
 
             r.Check(
-                actionCountFailure == null && arrearsActionCount == 4 && noArrearsActionCount == 3,
-                "arrears add one expanded action",
-                $"OBSERVED arrears {arrearsActionCount}, no arrears {noArrearsActionCount}; " +
-                $"EXPECTED arrears 4, no arrears 3{(actionCountFailure == null ? "" :
-                $"; failure={actionCountFailure}")}");
+                everyFixtureHasDisabledNegotiation,
+                "A6 Negotiate is present and always disabled",
+                negotiationDetails.ToString());
+
+            bool payArrearsOnlyForOutstandingDebt = observationFailure == null;
+            bool arrearsPayrollBinding = false;
+            StringBuilder arrearsDetails = new StringBuilder();
+            for (int i = 0; i < fixtures.Length; i++)
+            {
+                bool hasOutstandingArrears = fixtures[i].contract.arrearsSilver > 0;
+                bool definitionPresent = ContainsEmployeeAction(
+                    definitions[i], "PayArrears");
+                EmployeeActionObservation pay = FindEmployeeAction(
+                    observations[i], "Pay arrears (", startsWith: true);
+                bool observedPresent = pay != null;
+                if (i > 0)
+                {
+                    arrearsDetails.Append("; ");
+                }
+
+                arrearsDetails.Append(fixtures[i].label).Append("=")
+                    .Append(observedPresent ? pay.label : "absent");
+                if (definitionPresent != hasOutstandingArrears ||
+                    observedPresent != hasOutstandingArrears)
+                {
+                    payArrearsOnlyForOutstandingDebt = false;
+                }
+
+                if (i == 4)
+                {
+                    arrearsPayrollBinding = pay != null && pay.available &&
+                        CallsMethod(pay.callback?.Method, payArrears);
+                }
+            }
+
+            r.Check(
+                payArrearsOnlyForOutstandingDebt && arrearsPayrollBinding,
+                "A7 Pay arrears appears only with outstanding arrears and invokes PayrollService.TryPayArrears",
+                $"{arrearsDetails}; payroll binding={arrearsPayrollBinding}; " +
+                $"failure={observationFailure ?? "none"}");
+
+            bool everyActionLayoutFits = observationFailure == null;
+            StringBuilder layoutDetails = new StringBuilder();
+            for (int i = 0; i < fixtures.Length; i++)
+            {
+                string fixtureLayoutDetail = "<layout missing>";
+                bool fits = layouts[i] != null &&
+                    EmployeeActionSlotsFit(
+                        layouts[i], layoutDefinitions[i], actionStackField, layoutHeightField,
+                        rowRect, out fixtureLayoutDetail);
+                if (i > 0)
+                {
+                    layoutDetails.Append("; ");
+                }
+
+                layoutDetails.Append(fixtures[i].label).Append("=")
+                    .Append(fixtureLayoutDetail);
+                if (!fits)
+                {
+                    everyActionLayoutFits = false;
+                }
+            }
+
+            r.Check(
+                everyActionLayoutFits,
+                "A8 every expanded action slot is disjoint from its neighbours and inside the reported row height",
+                $"{layoutDetails}; failure={observationFailure ?? "none"}");
+        }
+
+        private static EmploymentContract BuildEmployeeCardFixtureContract(
+            int id, string workerName, EmploymentStatus status, int termDays,
+            int arrearsSilver, int now)
+        {
+            return new EmploymentContract
+            {
+                id = id,
+                settlementName = "Employee-card fixture settlement",
+                factionName = "Employee-card fixture faction",
+                workerName = workerName,
+                workerSkills = "Construction 8",
+                dailyWage = 100,
+                termDays = termDays,
+                combatClause = CombatClause.Civilian,
+                wageStructure = WageStructure.Daily,
+                nextPaymentTick = now + GenDate.TicksPerDay,
+                hiredTick = now,
+                arrivalTick = status == EmploymentStatus.Travelling
+                    ? now + GenDate.TicksPerDay
+                    : now,
+                arrivedTick = status == EmploymentStatus.Travelling
+                    ? EmploymentContract.NotArrived
+                    : now,
+                endTick = termDays > 0 ? now + termDays * GenDate.TicksPerDay : -1,
+                status = status,
+                arrearsSilver = arrearsSilver
+            };
+        }
+
+        private static bool CaptureEmployeeActionButton(
+            Rect rect, string label, bool available, string tooltip, System.Action action)
+        {
+            if (employeeActionObservations != null)
+            {
+                employeeActionObservations.Add(new EmployeeActionObservation
+                {
+                    rect = rect,
+                    label = label,
+                    available = available,
+                    tooltip = tooltip,
+                    callback = action
+                });
+            }
+
+            // The real DrawEmployeeActionStack has already supplied the label, enable condition,
+            // tooltip, and callback. Skip Widgets.ButtonText so this observation does not need a
+            // live GUI event or invoke any mutating service callback.
+            return false;
+        }
+
+        private static EmployeeActionObservation FindEmployeeAction(
+            List<EmployeeActionObservation> observations, string label, bool startsWith)
+        {
+            if (observations == null)
+            {
+                return null;
+            }
+
+            for (int i = 0; i < observations.Count; i++)
+            {
+                EmployeeActionObservation observation = observations[i];
+                if (startsWith
+                    ? observation.label?.StartsWith(label, StringComparison.Ordinal) == true
+                    : observation.label == label)
+                {
+                    return observation;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool ContainsEmployeeAction(Array definitions, string kindName)
+        {
+            if (definitions == null)
+            {
+                return false;
+            }
+
+            FieldInfo kindField = definitions.GetType().GetElementType()?.GetField(
+                "kind", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (kindField == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                object definition = definitions.GetValue(i);
+                object kind = kindField.GetValue(definition);
+                if (kind?.ToString() == kindName)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string DescribeEmployeeActions(Array definitions)
+        {
+            if (definitions == null)
+            {
+                return "<missing>";
+            }
+
+            FieldInfo kindField = definitions.GetType().GetElementType()?.GetField(
+                "kind", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (kindField == null)
+            {
+                return "<kind field missing>";
+            }
+
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < definitions.Length; i++)
+            {
+                if (i > 0)
+                {
+                    result.Append(", ");
+                }
+
+                result.Append(kindField.GetValue(definitions.GetValue(i)));
+            }
+
+            return result.ToString();
+        }
+
+        private static string DescribeEmployeeAction(EmployeeActionObservation observation)
+        {
+            if (observation == null)
+            {
+                return "<missing>";
+            }
+
+            return $"label=\"{observation.label ?? "<null>"}\", " +
+                $"available={observation.available}, " +
+                $"callback={observation.callback?.Method?.Name ?? "<null>"}";
+        }
+
+        private static bool EmployeeActionSlotsFit(
+            object layout, Array definitions, FieldInfo actionStackField,
+            FieldInfo layoutHeightField, Rect rowRect, out string detail)
+        {
+            detail = "<unmeasured>";
+            if (layout == null || definitions == null || actionStackField == null ||
+                layoutHeightField == null)
+            {
+                detail = "layout, definitions, action stack, or height was unavailable";
+                return false;
+            }
+
+            Rect[] slots = actionStackField.GetValue(layout) as Rect[];
+            if (slots == null)
+            {
+                detail = "action stack was unavailable";
+                return false;
+            }
+
+            float rowHeight = (float)layoutHeightField.GetValue(layout);
+            bool fits = slots.Length == definitions.Length;
+            int overlapCount = 0;
+            int outsideCount = 0;
+            for (int i = 0; i < slots.Length; i++)
+            {
+                Rect slot = slots[i];
+                if (slot.y < rowRect.y || slot.y + slot.height > rowRect.y + rowHeight)
+                {
+                    outsideCount++;
+                    fits = false;
+                }
+
+                for (int j = i + 1; j < slots.Length; j++)
+                {
+                    if (!EmployeeRectsDisjoint(slot, slots[j]))
+                    {
+                        overlapCount++;
+                        fits = false;
+                    }
+                }
+            }
+
+            detail = $"slots={slots.Length}, definitions={definitions.Length}, " +
+                $"rowHeight={rowHeight:0.###}, overlaps={overlapCount}, outside={outsideCount}";
+            return fits;
+        }
+
+        private static bool EmployeeRectsDisjoint(Rect first, Rect second)
+        {
+            bool separatedHorizontally = first.x + first.width <= second.x ||
+                second.x + second.width <= first.x;
+            bool separatedVertically = first.y + first.height <= second.y ||
+                second.y + second.height <= first.y;
+            return separatedHorizontally || separatedVertically;
         }
 
         private static void CheckAutoRenewPersistence(Results r)
