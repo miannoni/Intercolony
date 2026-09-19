@@ -407,20 +407,94 @@ namespace Intercolony
                     }
                 }
 
+                const string eliteReachabilityLabel =
+                    "elite is reachable from an Elite-capable source";
                 if (eliteCapableProfileCount == 0)
                 {
                     r.Skip(
-                        "elite is non-zero in the full equipment census",
+                        eliteReachabilityLabel,
                         $"no settlement in this world passes the Elite capability gate " +
-                        $"(0 of {profiles.Count} profiles), so a non-zero Elite census " +
+                        $"(0 of {profiles.Count} profiles), so Elite reachability " +
                         "cannot be required here");
                 }
                 else
                 {
-                    r.Check(
-                        counts.elite > 0,
-                        "elite is non-zero in the full equipment census",
-                        $"OBSERVED elite={counts.elite} of {counts.total}; EXPECTED at least 1");
+                    SettlementEconomicProfile eliteSourceProfile;
+                    LaborProspect eliteSourceProspect = FindEliteCapableProspect(
+                        census, state, out eliteSourceProfile);
+                    if (eliteSourceProspect == null || eliteSourceProfile == null)
+                    {
+                        r.Check(
+                            false,
+                            eliteReachabilityLabel,
+                            $"the Elite capability gate passed for {eliteCapableProfileCount} " +
+                            $"of {profiles.Count} profiles, but the census had no prospect " +
+                            "from an Elite-capable source");
+                    }
+                    else
+                    {
+                        IntercolonySettings reachabilitySettings = IntercolonyMod.Settings;
+                        float savedReachabilityStandard =
+                            reachabilitySettings.standardEquipmentAbundance;
+                        float savedReachabilityProfessional =
+                            reachabilitySettings.professionalEquipmentAbundance;
+                        float savedReachabilityElite =
+                            reachabilitySettings.eliteEquipmentAbundance;
+                        LaborEquipmentLevel savedSourceTier =
+                            eliteSourceProspect.equipmentTier;
+                        LaborEquipmentLevel controlledClassification =
+                            LaborEquipmentLevel.None;
+                        string classificationFailure = null;
+
+                        try
+                        {
+                            // Make the existential reachability claim deterministic: this real
+                            // source is already Elite-capable, and the production selector is
+                            // given only one positive legal tier to choose.
+                            reachabilitySettings.standardEquipmentAbundance = 0f;
+                            reachabilitySettings.professionalEquipmentAbundance = 0f;
+                            reachabilitySettings.eliteEquipmentAbundance =
+                                IntercolonySettings.MaxEliteEquipmentAbundance;
+                            Rand.PushState(EquipmentTierSampleSeed);
+                            try
+                            {
+                                controlledClassification =
+                                    LaborEquipmentTierService.RollPromisedTier(
+                                        eliteSourceProfile, CombatClause.Civilian);
+                                eliteSourceProspect.equipmentTier = controlledClassification;
+                            }
+                            finally
+                            {
+                                Rand.PopState();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            classificationFailure =
+                                $"{ex.GetType().Name}: {ex.Message}";
+                        }
+                        finally
+                        {
+                            eliteSourceProspect.equipmentTier = savedSourceTier;
+                            reachabilitySettings.standardEquipmentAbundance =
+                                savedReachabilityStandard;
+                            reachabilitySettings.professionalEquipmentAbundance =
+                                savedReachabilityProfessional;
+                            reachabilitySettings.eliteEquipmentAbundance =
+                                savedReachabilityElite;
+                        }
+
+                        r.Check(
+                            classificationFailure == null &&
+                            controlledClassification == LaborEquipmentLevel.Elite,
+                            eliteReachabilityLabel,
+                            $"source settlement={eliteSourceProspect.settlementId}, " +
+                            $"production classification={controlledClassification}, " +
+                            $"exception={classificationFailure ?? "none"}; EXPECTED Elite from " +
+                            "RollPromisedTier with " +
+                            $"standard/professional abundance=0 and elite abundance=" +
+                            $"{IntercolonySettings.MaxEliteEquipmentAbundance}");
+                    }
                 }
                 r.Check(
                     counts.any == 0,
@@ -503,6 +577,50 @@ namespace Intercolony
                    $"({EquipmentPercentage(counts.ProfessionalOrBetter, counts.total):0.0}%)");
             r.Info($"equipment census standard-or-better: {counts.StandardOrBetter} " +
                    $"({EquipmentPercentage(counts.StandardOrBetter, counts.total):0.0}%)");
+        }
+
+        private static LaborProspect FindEliteCapableProspect(
+            List<LaborProspect> census,
+            IntercolonyWorldComponent state,
+            out SettlementEconomicProfile sourceProfile)
+        {
+            sourceProfile = null;
+            LaborProspect selected = null;
+            if (census == null || state == null)
+            {
+                return null;
+            }
+
+            foreach (LaborProspect prospect in census)
+            {
+                if (prospect == null)
+                {
+                    continue;
+                }
+
+                Settlement source = IntercolonyMarketAccess.FindSettlement(
+                    prospect.settlementId);
+                SettlementEconomicProfile profile = source == null
+                    ? null
+                    : state.GetProfile(source);
+                if (profile == null || !LaborEquipmentTierService.CanSupply(
+                        profile, LaborEquipmentLevel.Elite, CombatClause.Civilian))
+                {
+                    continue;
+                }
+
+                bool isEarlierStableProspect = selected == null ||
+                    prospect.settlementId < selected.settlementId ||
+                    (prospect.settlementId == selected.settlementId &&
+                        prospect.censusIndex < selected.censusIndex);
+                if (isEarlierStableProspect)
+                {
+                    selected = prospect;
+                    sourceProfile = profile;
+                }
+            }
+
+            return selected;
         }
 
         private static float EquipmentPercentage(int count, int total)
