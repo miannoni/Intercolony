@@ -2514,6 +2514,47 @@ previous measurement found **0 qualifying conventional routes in 748 examined ca
 may be rare in normal play. This stage fixed quote correctness, not availability; whether availability
 needs balancing is a separate judgement for the operator.
 
+### F24/P7: emergency pod attention needs a human read
+
+Added 2026-09-21 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P7 of the Playtest
+Correction Pass II run, shipped 2026-09-21. The operator saw that when an emergency employee's drop
+pod was launched, the game did not pause and the letter's **Jump to location** control was dead. Both
+halves are fixed in `bea6a82`, and both causes were confirmed against decompiled vanilla source rather
+than guessed.
+
+The pause is a property of the **LETTER DEF**, not a call. `LetterStack` pauses when
+`Prefs.AutomaticPauseMode >= let.def.pauseMode`, and `LetterDef.pauseMode` defaults to `AnyLetter` —
+the most permissive value — so the old letter paused only for players who had opted into pausing on
+everything. The new letter def sets `pauseMode` to **MajorThreat**, which pauses for everyone except
+players who turned auto-pause off; **MajorThreat** is RimWorld's own default preference. The letter
+keeps positive styling: its colour and sound are copied from vanilla's `RitualOutcomePositive`. There
+is no tick-manager call, so a player who disabled auto-pause keeps that choice.
+
+The jump was dead because the letter targeted the incoming pod object, which **DESTROYS ITSELF ON
+IMPACT**. Vanilla raids target the pawn instead, and the camera resolves a pawn up its container chain.
+That leaves one target valid as the inbound skyfaller, then the landed pod, then the worker.
+
+**There are no automated assertions for P7.** Four were written and then removed rather than kept,
+because the fixture could not reliably get a drop pod launched: across three separate five-world
+sweeps it launched on roughly half of generated worlds, and even bypassing the scheduler entirely it
+still failed on two worlds in five. An assertion that silently depends on world luck can look green and
+prove nothing, which is the exact defect this pass spent itself removing. This stage therefore rests on
+the human checks below more than any other, and they are **required**, not nice-to-have.
+
+**Steps.**
+
+1. Hire and accept one emergency pod worker.
+2. See the letter fire while the pod is still inbound, not after it has landed.
+3. See the game pause automatically.
+4. Confirm **Jump to location** is **ENABLED** on that letter.
+5. Click it and confirm the camera lands on the incoming pod or its landing site.
+6. Confirm the game **REMAINS paused** after the jump.
+7. Resume, and visibly watch the pod descend.
+8. Confirm the worker activates from that pod exactly once — not twice, and not never.
+
+Also check that an ordinary, non-emergency employee arrival is unchanged, and that no other Intercolony
+letter started pausing the game. The new pause classification is meant to apply to this one event only.
+
 ---
 
 ## Proven in play
