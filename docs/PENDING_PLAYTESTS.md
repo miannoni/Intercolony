@@ -2335,6 +2335,32 @@ The known gap is plain: **Odyssey outfit stands bypass the consent path.** Vanil
 
 Each system was asserted and mutation-proven on its own, and none of that establishes that they behave when run together in one colony over real time.
 
+### F04 Produce Controls manager and category need a human read
+
+Added 2026-09-19 on branch `foreman/playtest-corrections-2026-09-18`, as Stage P1 of the Playtest
+Correction Pass II run, shipped 2026-09-19. Automated evidence is complete — whole suite **1741 passed
+/ 0 failed / 17 skipped**, exit **0**, log clean, world-pawn delta **0** — and both of the plan's
+mutation clauses were discharged. What remains cannot be settled by a test.
+
+**Steps.**
+
+1. Judge whether object-side and Architect **Produce controls** feel like the **same action**. Both
+   now open the preset manager; the object entry point additionally passes that object's cell as
+   context.
+2. Judge whether **New production** is discoverable inside the manager. It is the route to the
+   per-production editor that the object gizmo used to open directly.
+3. Judge whether the Architect **Production** category contains the full coherent toolset —
+   **Produce/Resume**, **Pause**, **Stop**, the preset manager and saved presets — and whether
+   **Orders** no longer contains any of them.
+4. Open the manager from the Architect and judge whether **New production**, deliberately
+   **DISABLED** with an explanatory tooltip because there is no context object, reads sensibly
+   rather than merely as broken. This was the one product decision Stage P1 made that the plan did
+   not decide; it specifically needs human eyes.
+
+The XML def change is not exercised by a build. The `IntercolonyProduction` category was proven to
+**LOAD** by the suite's clean startup check, but whether the menu reads correctly to a human has not
+been seen.
+
 ---
 
 ## Proven in play
