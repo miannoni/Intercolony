@@ -1,13 +1,14 @@
 # Foreman state — Intercolony
 
-Stage: **P7 — F24: raid-like attention for inbound emergency pods**
-Unit: P7.1 — FOCUSED RECON (required by the plan): how vanilla pauses, targets and times a pod-arrival letter
-Worker: **sol recon running** — P7.1 vanilla letter/attention pattern · log `C:\Users\matte\.claude\jobs\439462af\tmp\p7-1-recon.log` · bg id `b6y0y1i2m`
-Loop: WAITING_ON_WORKER
-Last done: **P6 CLOSED.** Nine assertions, every one seen red for its own reason; final gate **1770/0/18**, exit 0, log CLEAN, world pawns 15 → 15, kept-forever 12 → 12. Branch pushed at `040bd90`. Along the way P6 also fixed two pre-existing test defects it exposed: a payroll fixture that abandoned its hired pawn on the map, and an equipment assertion that had been silently skipping since P5.
-**Non-blocking defect, still owed:** `an applicant whose actual gear misses the request is not queued` failed once at HEAD (`Accepted`/`queued=True`) having passed at `8f9b7cf`, `64b2c17`, `1bb8339` — **flaky**, probably world-dependent like the others.
-**Standing rule earned twice in P6:** with `-Fresh`, two runs are never a controlled comparison — every run builds a new world. Compare only within a run, or across several.
-Updated: 2026-09-20 13:05
+Stage: **ALL NINE STAGES CLOSED — P0 through P8**
+Unit: none — run complete
+Worker: idle/none
+Loop: CLEAN_HALT
+Last done: **Playtest Correction Pass II is complete.** 51 commits on `foreman/playtest-corrections-2026-09-18`, cut from `b4bab42`. **Final acceptance gate: whole suite 1770 passed / 0 failed / 18 skipped, exit 0, log CLEAN, world pawns 14 → 14, kept-forever 12 → 12, build 0 warnings / 0 errors** — and clean on **five** separately generated worlds across the closing sweeps.
+**Operator-reserved, deliberately NOT performed:** merge to `main`, tag, GitHub release, Steam Workshop publish. A clean halt is a completed, tested, pushed development branch, and that is what this is.
+**What needs the operator's hands:** everything in `docs/PENDING_PLAYTESTS.md`. Two items need preparation rather than just play — loading a save made **before** this pass to exercise the schema 59 → 60 emergency-applicant migration, and posting an Emergency job **while paused**, which reads as broken but is not. **P7 has no automated assertions at all**, so its eight checks carry more weight than the rest.
+**Heartbeat cron `38e7d64d` is session-only and should now be removed — there is nothing left for it to wake.**
+Updated: 2026-09-21 20:01 — RUN COMPLETE
 Foreman load: 2026-09-20 02:57 — SKILL.md + RUN_CONTRACT.md held in session context since the 22:49 activation load; loop restated: wake → check one → verify → dispatch one → persist → end turn.
 Plan: C:\dev\INTERCOLONY_PLAYTEST_CORRECTION_PASS_II_PLAN.md · worker copy `docs/PLAYTEST_CORRECTION_PASS_II_PLAN.md`
 Mode: autonomous run-to-halt
@@ -36,8 +37,53 @@ Clean halt is a completed, tested, pushed development branch.
 | P4 | F23 diversified equipment packages | closed — 1756/0/19 |
 | P5 | F23/Emergency posting performance | closed — 1757/0/20 |
 | P6 | F24 emergency quote persistence + hiring | closed — 1770/0/18 |
-| P7 | F24 raid-like pod attention letter | in progress |
-| P8 | integration, pending-playtest cleanup, whole-suite gate | not started |
+| P7 | F24 raid-like pod attention letter | closed — 1770/0/18 |
+| P8 | integration, pending-playtest cleanup, whole-suite gate | closed — 1770/0/18 |
+
+## Stage P8 units
+
+| Unit | Scope | Status |
+|---|---|---|
+| P8.3 | mark operator-proven playtests; retire the pod-descent claim | done `63b6b63` |
+| P8.4 | prove the P0 timing instrumentation is free when off | done — no change needed |
+| P8.1/8.2 | cross-stage integration + regression verification | done — 4 worlds clean after P8.6 |
+| P8.6 | make the Elite assertion deterministic | done `4ff2a2b` |
+| P8.5 | PROGRESS.md milestone, push, clean halt | done `5bf43aa` |
+
+## Stage P7 units — closed
+
+| Unit | Scope | Status |
+|---|---|---|
+| P7.1 | focused recon: how vanilla pauses, targets and times a pod-arrival letter | done — findings in the header |
+| P7.2 | new `LetterDef` with `pauseMode` MajorThreat; look target becomes the pawn | done `bea6a82` |
+| P7.2b | reach the def through `[DefOf]`, not a `GetNamed` string | done `bea6a82` |
+| P7.3a | recon: why the gear-gate assertion is flaky | done — findings in the header |
+| P7.3b | force the gear fixture's actual loadout so it stops being a lottery | done `bea6a82` |
+| P7.3 | the four letter assertions L1–L4 | written, all four failing |
+| P7.3c | repair the fixture so `Advance` actually launches | failed twice |
+| P7.3d | sol recon: the S3-vs-P7 launch differential | done — preflight guard named |
+| P7.3e | falsify both `IsCapturedEmployee` clauses + loud preflight assertion | fix failed; the loud assertion works |
+| P7.3f | instrument the preflight failure — measure, do not reason | done, and it paid |
+| P7.3g | set `employerFaction` to the pawn's own faction | done — preflight now passes |
+| P7.3h | first tick unpatched + prefix counters | done — 68/0/1, all green |
+| P7.4 | stage gate + pending-playtest entry | not started |
+
+**Decision point if P7.3h does not resolve it:** stop sinking cycles into L4's re-entry. Drop the
+Harmony machinery, keep L1–L3, and move L4's duplicate-launch claim to `docs/PENDING_PLAYTESTS.md`
+as human evidence. The stage's player-facing value is the pause and the live jump target, both of
+which L1–L3 cover.
+
+## P7 locked semantics
+
+- Letter arrives while the pod is still meaningfully inbound, **after** `MakeDropPodAt`, in the
+  same synchronous call. Do not move the send.
+- The pause comes from the **def**, never a `TickManager` call, and stays preference-gated — a
+  player who turned auto-pause off keeps that choice.
+- The look target is the **employee pawn**; `CameraJumper` resolves it through `ParentHolder` to
+  the skyfaller, then the closed pod, then the pawn. A cell target is a guarded fallback only.
+- Source settlement and worker stay named in the letter.
+- No second decorative pod, no pre-spawned pawn; the landing lifecycle is play-proven and
+  untouched.
 
 ## Stage P6 units — closed, kept as the index to its evidence
 
@@ -95,8 +141,9 @@ removed. The 59 → 60 migration must resolve that so the fencing does not outli
 
 - **Tier-1 market evidence is not deduplicated by settlement** — one supplier can contribute several
   listings or quotations to a single median. Pre-existing, out of scope, recorded not fixed.
-- **`Elite` can be structurally absent from a world.** A run measured **0 Elite of 550 prospects**
-  under the currently accepted gate. P4 treats "Elite exists at all" as world-dependent.
+- **`Elite` can be structurally absent from a world**, and this stopped being merely an observation:
+  it fails the final gate about one run in three (0 Elite of 594 at economy seed 507228411). Being
+  fixed in P8.6.
 - **`LaborProspect` has no unique stable identity.** Two prospects from one settlement with
   identical skills, passions and price receive the same equipment package. Distinct applicants vary.
 - **`IntercolonyAllSelfTests` `state == null` early-out** reports `notRun = Definitions.Length`,
